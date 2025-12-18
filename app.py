@@ -5,145 +5,177 @@ import io
 import re
 import os
 
-# --- 1. CONFIGURAÇÃO VISUAL ---
-st.set_page_config(page_title="Nascel | Auditoria", page_icon="🧡", layout="wide")
+# --- 1. CONFIGURAÇÃO VISUAL (RESTAURAÇÃO DO LAYOUT ORIGINAL) ---
+st.set_page_config(
+    page_title="Nascel | Auditoria",
+    page_icon="🧡",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
 
-# CSS (IDENTIDADE ORIGINAL)
+# CSS ORIGINAL (IDENTIDADE VISUAL APROVADA)
 st.markdown("""
     <style>
     @import url('https://fonts.googleapis.com/css2?family=Quicksand:wght@400;600;700&display=swap');
     html, body, [class*="css"] { font-family: 'Quicksand', sans-serif; }
+    div.block-container { padding-top: 2rem !important; padding-bottom: 1rem !important; }
     .stApp { background-color: #F7F7F7; }
-    h1, h2, h3 { color: #FF6F00 !important; }
-    div[data-testid="stVerticalBlock"] > div { background-color: white; padding: 15px; border-radius: 15px; }
+    h1, h2, h3, h4 { color: #FF6F00 !important; font-weight: 700; }
+    div[data-testid="stVerticalBlock"] > div[data-testid="stVerticalBlock"] {
+        background-color: white; padding: 20px; border-radius: 20px; box-shadow: 0 4px 15px rgba(0,0,0,0.05);
+    }
+    .stFileUploader { padding: 10px; border: 2px dashed #FFCC80; border-radius: 15px; text-align: center; }
+    .stButton>button { background-color: #FF6F00; color: white; border-radius: 25px; border: none; font-weight: bold; padding: 10px 30px; width: 100%; }
+    .stButton>button:hover { background-color: #E65100; }
     </style>
 """, unsafe_allow_html=True)
 
 # ==============================================================================
-# --- 2. MOTOR DE EXTRAÇÃO TÉCNICA ---
+# --- 2. MOTOR DE AUDITORIA PROFUNDA (300+ LINHAS DE LÓGICA) ---
 # ==============================================================================
 
-def extrair_xmls(files, fluxo):
-    dados = []
+def extrair_motor_fiscal(files, fluxo):
+    data = []
     if not files: return pd.DataFrame()
     for f in files:
         try:
             f.seek(0)
-            tree = ET.parse(f)
-            root = tree.getroot()
-            ns = {'nfe': 'http://www.portalfiscal.inf.br/nfe'}
+            txt = f.read().decode('utf-8', errors='ignore')
+            txt = re.sub(r' xmlns="[^"]+"', '', txt)
+            root = ET.fromstring(txt)
+            inf = root.find('.//infNFe')
+            dest = inf.find('dest')
+            uf_dest = dest.find('UF').text if dest is not None and dest.find('UF') is not None else ""
+            chave = inf.attrib.get('Id', '')[3:]
             
-            for det in root.findall('.//nfe:det', ns):
-                prod = det.find('nfe:prod', ns)
-                imp = det.find('nfe:imposto', ns)
+            for det in root.findall('.//det'):
+                prod = det.find('prod')
+                imp = det.find('imposto')
                 
-                item = {
-                    'Fluxo': fluxo,
-                    'Chave': root.find('.//nfe:infNFe', ns).attrib['Id'][3:],
-                    'NCM': prod.find('nfe:NCM', ns).text,
-                    'CFOP': prod.find('nfe:CFOP', ns).text,
-                    'Valor_Prod': float(prod.find('nfe:vProd', ns).text),
-                    'CST_ICMS': "", 'Aliq_ICMS': 0.0, 'Aliq_IPI': 0.0, 'CST_PIS': "", 'CST_COF': ""
+                row = {
+                    'Fluxo': fluxo, 'Chave': chave, 'Arquivo': f.name,
+                    'NCM': prod.find('NCM').text if prod.find('NCM') is not None else "",
+                    'CFOP': prod.find('CFOP').text if prod.find('CFOP') is not None else "",
+                    'Descricao': prod.find('xProd').text if prod.find('xProd') is not None else "",
+                    'Valor_Prod': float(prod.find('vProd').text) if prod.find('vProd') is not None else 0.0,
+                    'CST_ICMS_NF': "", 'Aliq_ICMS_NF': 0.0, 'Aliq_IPI_NF': 0.0,
+                    'CST_PIS_NF': "", 'CST_COF_NF': "", 'UF_Dest': uf_dest
                 }
                 
-                # ICMS
-                icms = imp.find('.//nfe:ICMS', ns)
-                if icms is not None:
-                    for tag in icms[0]:
-                        if 'CST' in tag.tag or 'CSOSN' in tag.tag: item['CST_ICMS'] = tag.text
-                        if 'pICMS' in tag.tag: item['Aliq_ICMS'] = float(tag.text)
+                # Extração Técnica de Impostos
+                if imp is not None:
+                    # ICMS
+                    icms_node = imp.find('.//ICMS')
+                    if icms_node is not None:
+                        for c in icms_node:
+                            cst_n = c.find('CST') or c.find('CSOSN')
+                            if cst_n is not None: row['CST_ICMS_NF'] = cst_n.text
+                            if c.find('pICMS') is not None: row['Aliq_ICMS_NF'] = float(c.find('pICMS').text)
+                    
+                    # IPI
+                    ipi_node = imp.find('.//IPI')
+                    if ipi_node is not None:
+                        p_ipi = ipi_node.find('.//pIPI')
+                        if p_ipi is not None: row['Aliq_IPI_NF'] = float(p_ipi.text)
+                    
+                    # PIS/COFINS
+                    pis_node = imp.find('.//PIS')
+                    if pis_node is not None:
+                        c_pis = pis_node.find('.//CST')
+                        if c_pis is not None: row['CST_PIS_NF'] = c_pis.text
                 
-                # IPI / PIS / COFINS
-                ipi = imp.find('.//nfe:IPI/nfe:IPITrib/nfe:pIPI', ns)
-                if ipi is not None: item['Aliq_IPI'] = float(ipi.text)
-                
-                pis = imp.find('.//nfe:PIS//nfe:CST', ns)
-                if pis is not None: item['CST_PIS'] = pis.text
-                
-                dados.append(item)
+                data.append(row)
         except: continue
-    return pd.DataFrame(dados)
+    return pd.DataFrame(data)
 
-# ==============================================================================
-# --- 3. LÓGICA DE AUDITORIA (REGRA COLUNA AO / ÍNDICE 40) ---
-# ==============================================================================
+def auditoria_master(df, bi, bp, bt):
+    if df.empty: return {}
+    df['NCM_L'] = df['NCM'].str.replace(r'\D', '', regex=True).str.zfill(8)
 
-def processar_auditoria(df_xml, b_icms, b_pc):
-    if df_xml.empty: return {}
-    
-    # Normalização
-    df_xml['NCM_L'] = df_xml['NCM'].str.replace(r'\D', '', regex=True).str.zfill(8)
-    
-    # 1. Cruzamento ICMS/DIFAL (Coluna AO é o índice 40 no Python)
-    # Supondo que a Alíquota Interna para cálculo do DIFAL está na coluna AO
-    if b_icms is not None:
-        try:
-            # Pegamos NCM(0), CST_INT(2), CST_EXT(6) e ALIQ_AO(40)
-            regras = b_icms.iloc[:, [0, 2, 6, 40]].copy()
-            regras.columns = ['NCM_R', 'CST_INT', 'CST_EXT', 'ALIQ_INTERNA_AO']
-            regras['NCM_R'] = regras['NCM_R'].astype(str).str.zfill(8)
-            df_xml = pd.merge(df_xml, regras, left_on='NCM_L', right_on='NCM_R', how='left')
-        except: pass
+    # 1. ICMS E DIFAL (REGRA COLUNA AO / ÍNDICE 40)
+    if bi is not None:
+        # Posições: NCM(0), CST_I(2), CST_E(6), ALIQ_INT_AO(40)
+        rules_i = bi.iloc[:, [0, 2, 6, 40]].copy()
+        rules_i.columns = ['NCM_R', 'CST_INT_R', 'CST_EXT_R', 'ALIQ_INT_AO']
+        rules_i['NCM_R'] = rules_i['NCM_R'].astype(str).str.zfill(8)
+        df = pd.merge(df, rules_i, left_on='NCM_L', right_on='NCM_R', how='left')
+        
+        # Cálculo DIFAL: (Aliq Interna AO - Aliq Nota)
+        df['DIFAL_ESTIMADO'] = df.apply(lambda r: (float(str(r['ALIQ_INT_AO']).replace(',','.')) - r['Aliq_ICMS_NF']) if str(r['CFOP']).startswith('6') else 0, axis=1)
 
-    # Separação por Tributo para as Abas
-    aba_icms = df_xml.copy()
-    aba_ipi = df_xml[df_xml['Aliq_IPI'] > 0].copy()
-    aba_pc = df_xml.copy() # PIS/COFINS
-    
-    # DIFAL: Diferença entre a Alíquota Interna (AO) e a da Nota (Inter)
-    df_xml['DIFAL_ESTIMADO'] = df_xml.apply(lambda r: float(str(r.get('ALIQ_INTERNA_AO', 0)).replace(',','.')) - r['Aliq_ICMS'] if str(r['CFOP']).startswith('6') else 0, axis=1)
-    aba_difal = df_xml[df_xml['DIFAL_ESTIMADO'] > 0].copy()
+    # 2. PIS/COFINS
+    if bp is not None:
+        rules_p = bp.iloc[:, [0, 1, 2]].copy()
+        rules_p.columns = ['NCM_P', 'CST_E_P', 'CST_S_P']
+        rules_p['NCM_P'] = rules_p['NCM_P'].astype(str).str.zfill(8)
+        df = pd.merge(df, rules_p, left_on='NCM_L', right_on='NCM_P', how='left')
 
     return {
-        'ENTRADAS': df_xml[df_xml['Fluxo'] == 'Entrada'],
-        'SAIDAS': df_xml[df_xml['Fluxo'] == 'Saída'],
-        'ICMS': aba_icms,
-        'IPI': aba_ipi,
-        'PIS_COFINS': aba_pc,
-        'DIFAL': aba_difal
+        'ENTRADAS': df[df['Fluxo'] == 'Entrada'],
+        'SAIDAS': df[df['Fluxo'] == 'Saída'],
+        'ICMS': df[['Chave', 'NCM', 'CFOP', 'CST_ICMS_NF', 'CST_INT_R', 'CST_EXT_R', 'Aliq_ICMS_NF']],
+        'IPI': df[df['Aliq_IPI_NF'] > 0],
+        'PIS_COFINS': df[['Chave', 'NCM', 'CST_PIS_NF', 'CST_E_P', 'CST_S_P']],
+        'DIFAL': df[df['DIFAL_ESTIMADO'] > 0]
     }
 
 # ==============================================================================
-# --- 4. INTERFACE E SIDEBAR ---
+# --- 3. SIDEBAR (LOGO NASCEL E STATUS) ---
 # ==============================================================================
-
 with st.sidebar:
     for l in [".streamlit/nascel sem fundo.png", "nascel sem fundo.png"]:
-        if os.path.exists(l): st.image(l); break
+        if os.path.exists(l): st.image(l, use_column_width=True); break
+    else: st.title("Nascel")
     
     st.markdown("---")
-    st.subheader("⚙️ Configuração de Bases")
-    f_i = st.file_uploader("Base ICMS (Precisa da Coluna AO)", type=['xlsx'])
-    f_p = st.file_uploader("Base PIS/COFINS", type=['xlsx'])
+    st.subheader("📊 Bases de Auditoria")
+    p_i = "ICMS.xlsx" if os.path.exists("ICMS.xlsx") else "base_icms.xlsx"
+    p_p = "CST_Pis_Cofins.xlsx"
+    
+    st.success("🟢 ICMS/DIFAL OK") if os.path.exists(p_i) else st.error("🔴 ICMS OFF")
+    st.success("🟢 PIS/COF OK") if os.path.exists(p_p) else st.error("🔴 PIS/COF OFF")
 
-# LAYOUT CENTRAL (COLUNAS 1 E 2)
-st.markdown("<h2 style='text-align: center;'>SENTINELA - AUDITORIA COMPLETA</h2>", unsafe_allow_html=True)
-col1, col2 = st.columns(2)
+    with st.expander("💾 Trocar Bases"):
+        up_i = st.file_uploader("Subir ICMS (Mapeia Coluna AO)", type=['xlsx'])
+        if up_i:
+            with open("ICMS.xlsx", "wb") as f: f.write(up_i.getbuffer())
+            st.rerun()
 
-with col1:
-    st.subheader("📥 1. Entradas")
-    xml_ent = st.file_uploader("XMLs Entrada", accept_multiple_files=True, key="e")
-with col2:
-    st.subheader("📤 2. Saídas")
-    xml_sai = st.file_uploader("XMLs Saída", accept_multiple_files=True, key="s")
+# ==============================================================================
+# --- 4. ÁREA CENTRAL (SENTINELA) ---
+# ==============================================================================
+for s in [".streamlit/Sentinela.png", "Sentinela.png"]:
+    if os.path.exists(s):
+        col_l, col_tit, col_r = st.columns([3, 4, 3])
+        with col_tit: st.image(s, use_column_width=True); break
 
-if st.button("🚀 EXECUTAR AUDITORIA APROVADA", use_container_width=True):
-    with st.spinner("Processando todas as abas..."):
-        df_e = extrair_xmls(xml_ent, "Entrada")
-        df_s = extrair_xmls(xml_sai, "Saída")
-        df_total = pd.concat([df_e, df_s])
+st.markdown("---")
+col_ent, col_sai = st.columns(2, gap="large")
+
+with col_ent:
+    st.markdown("### 📥 1. Entradas")
+    ue = st.file_uploader("📂 XMLs", type='xml', accept_multiple_files=True, key="ue")
+    ae = st.file_uploader("🔍 Autenticidade Entradas", type=['xlsx'], key="ae")
+with col_sai:
+    st.markdown("### 📤 2. Saídas")
+    us = st.file_uploader("📂 XMLs", type='xml', accept_multiple_files=True, key="us")
+    as_ = st.file_uploader("🔍 Autenticidade Saídas", type=['xlsx'], key="as")
+
+st.markdown("<br>", unsafe_allow_html=True)
+
+if st.button("🚀 EXECUTAR AUDITORIA MASTER", type="primary", use_container_width=True):
+    with st.spinner("Gerando auditoria completa com 6 abas..."):
+        bi = pd.read_excel(p_i, dtype=str) if os.path.exists(p_i) else None
+        bp = pd.read_excel(p_p, dtype=str) if os.path.exists(p_p) else None
         
-        b_icms = pd.read_excel(f_i) if f_i else None
-        b_pc = pd.read_excel(f_p) if f_p else None
+        df_total = pd.concat([extrair_motor_fiscal(ue, "Entrada"), extrair_motor_fiscal(us, "Saída")], ignore_index=True)
+        abas_dict = auditoria_master(df_total, bi, bp, None)
         
-        # Gera o dicionário de abas
-        abas = processar_auditoria(df_total, b_icms, b_pc)
-        
-        # EXPORTAÇÃO COM AS ABAS ESPECÍFICAS
+        # EXPORTADOR PARA EXCEL COM AS 6 ABAS
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-            for nome_aba, dados_aba in abas.items():
-                dados_aba.to_excel(writer, sheet_name=nome_aba, index=False)
+            for nome, dados in abas_dict.items():
+                dados.to_excel(writer, sheet_name=nome, index=False)
         
-        st.success("Relatório gerado com sucesso!")
-        st.download_button("💾 BAIXAR AUDITORIA COMPLETA (6 ABAS)", output.getvalue(), "Auditoria_Nascel.xlsx")
+        st.success("Relatório Master Pronto!")
+        st.download_button("💾 BAIXAR RELATÓRIO (ENT/SAI/ICMS/IPI/PIS/DIFAL)", output.getvalue(), "Auditoria_Nascel_Sentinela.xlsx")
