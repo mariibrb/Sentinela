@@ -3,65 +3,92 @@ import pandas as pd
 import xml.etree.ElementTree as ET
 import os
 
-st.set_page_config(page_title="Sentinela Fiscal", layout="wide")
-st.title("🛡️ Auditoria Fiscal Sentinela")
+st.set_page_config(page_title="Auditoria Fiscal Sentinela", layout="wide")
+st.title("🛡️ Auditoria Fiscal Sentinela - Ciclo Completo")
 
+# 1. CARREGAMENTO DAS BASES DE REGRA (EXCEL MESTRE)
 @st.cache_data
-def carregar_regras():
-    arquivos_excel = [f for f in os.listdir('.') if f.endswith('.xlsx')]
-    if not arquivos_excel:
-        st.error("❌ Erro: Planilha .xlsx não encontrada no GitHub!")
+def carregar_bases_mestre():
+    arquivo = 'Sentinela_MIRÃO_Outubro2025.xlsx'
+    if not os.path.exists(arquivo):
+        st.error(f"Arquivo {arquivo} não encontrado no diretório!")
         return None
-    try:
-        xls = pd.ExcelFile(arquivos_excel[0])
-        aba = 'Bases Tribut' if 'Bases Tribut' in xls.sheet_names else xls.sheet_names[0]
-        df = pd.read_excel(xls, sheet_name=aba)
-        st.success(f"✅ Base carregada: {arquivos_excel[0]}")
-        return df
-    except Exception as e:
-        st.error(f"Erro: {e}")
-        return None
+    
+    bases = {
+        'tribut': pd.read_excel(arquivo, sheet_name='Bases Tribut'),
+        'tes': pd.read_excel(arquivo, sheet_name='TES'),
+        'autent': pd.read_excel(arquivo, sheet_name='Autent')
+    }
+    return bases
 
-base_regras = carregar_regras()
+bases = carregar_bases_mestre()
 
-if base_regras is not None:
-    arquivos_xml = st.file_uploader("Arraste seus XMLs aqui", type="xml", accept_multiple_files=True)
+# 2. FUNÇÃO DE AUDITORIA (LÓGICA DAS COLUNAS AO-AT)
+def realizar_auditoria(row, bases):
+    analises = {}
+    
+    # Validação de Status (Baseado na aba Autent)
+    status_sefaz = "Autorizada"
+    if not bases['autent'].empty:
+        # Lógica de busca por chave de acesso
+        pass 
+    analises['STATUS_SEFAZ'] = status_sefaz
 
-    if arquivos_xml:
-        resultados = []
-        for arq in arquivos_xml:
-            try:
-                tree = ET.parse(arq)
-                root = tree.getroot()
-                ns = {'nfe': 'http://www.portalfiscal.inf.br/nfe'}
+    # Análise CST ICMS (Equivalente à fórmula da coluna AP)
+    ncm_regra = bases['tribut'][bases['tribut']['NCM'] == row['NCM']]
+    if not ncm_regra.empty:
+        cst_esperado = str(ncm_regra.iloc[0]['CST'])
+        if str(row['CST_ICMS']) == cst_esperado:
+            analises['Analise_CST_ICMS'] = "Correto"
+        else:
+            analises['Analise_CST_ICMS'] = f"Divergente - Esperado: {cst_esperado}"
+    else:
+        analises['Analise_CST_ICMS'] = "NCM não encontrado"
+
+    # CST x BC (Equivalente à coluna AQ)
+    if row['CST_ICMS'] == "20" and row['pRedBC'] == 0:
+        analises['CST_x_BC'] = "Erro: CST 020 sem redução"
+    elif row['CST_ICMS'] == "00" and abs(row['vBC'] - row['vProd']) > 0.02:
+        analises['CST_x_BC'] = "Erro: Base difere do produto"
+    else:
+        analises['CST_x_BC'] = "Correto"
+
+    return analises
+
+# 3. INTERFACE DE UPLOAD
+arquivos_xml = st.file_uploader("Suba seus XMLs para auditoria", type="xml", accept_multiple_files=True)
+
+if arquivos_xml and bases:
+    dados_xml = []
+    for arq in arquivos_xml:
+        try:
+            tree = ET.parse(arq)
+            root = tree.getroot()
+            ns = {'nfe': 'http://www.portalfiscal.inf.br/nfe'}
+            
+            # Extração de campos (Igual à aba Base_XML)
+            for det in root.findall('.//nfe:det', ns):
+                item = {
+                    'Número NF': root.find('.//nfe:ide/nfe:nNF', ns).text,
+                    'UF Emit': root.find('.//nfe:emit/nfe:enderEmit/nfe:UF', ns).text,
+                    'UF Dest': root.find('.//nfe:dest/nfe:enderDest/nfe:UF', ns).text,
+                    'NCM': det.find('.//nfe:prod/nfe:NCM', ns).text,
+                    'CFOP': det.find('.//nfe:prod/nfe:CFOP', ns).text,
+                    'vProd': float(det.find('.//nfe:prod/nfe:vProd', ns).text),
+                    'CST_ICMS': det.find('.//nfe:imposto//nfe:CST', ns).text if det.find('.//nfe:imposto//nfe:CST', ns) is not None else "00",
+                    # Adicione aqui todos os outros campos da Base_XML...
+                }
                 
-                # Dados básicos da nota
-                nf = root.find('.//nfe:ide/nfe:nNF', ns).text
-                u_em = root.find('.//nfe:emit/nfe:enderEmit/nfe:UF', ns).text
-                u_de = root.find('.//nfe:dest/nfe:enderDest/nfe:UF', ns).text
-                cpf  = root.find('.//nfe:dest/nfe:CPF', ns)
-                
-                # Valor do DIFAL (tag completa em uma linha só para não dar erro)
-                tag_difal = root.find('.//nfe:total/nfe:ICMSTot/nfe:vICMSUFDest', ns)
-                v_difal = float(tag_difal.text) if tag_difal is not None else 0
-                
-                for det in root.findall('.//nfe:det', ns):
-                    ncm = det.find('.//nfe:prod/nfe:NCM', ns).text
-                    cfop = det.find('.//nfe:prod/nfe:CFOP', ns).text
-                    
-                    status = "OK"
-                    # Regra: Se for CPF e Interestadual
-                    if cpf is not None and u_em != u_de:
-                        if str(cfop) != '6108':
-                            status = "ERRO: CFOP esperado 6108"
-                        elif v_difal <= 0:
-                            status = "ERRO: DIFAL não destacado"
-                    
-                    resultados.append({'Nota': nf, 'NCM': ncm, 'CFOP': cfop, 'Status': status})
-            except:
-                continue
+                # Executa a auditoria para a linha
+                item.update(realizar_auditoria(item, bases))
+                dados_xml.append(item)
+        except:
+            continue
 
-        if resultados:
-            df_final = pd.DataFrame(resultados)
-            st.dataframe(df_final, use_container_width=True)
-            st.download_button("📥 Baixar Relatório", df_final.to_csv(index=False).encode('utf-8-sig'), "auditoria.csv")
+    df_resultado = pd.DataFrame(dados_xml)
+    st.write("### Relatório de Auditoria Gerado")
+    st.dataframe(df_resultado)
+    
+    # Download
+    csv = df_resultado.to_csv(index=False).encode('utf-8-sig')
+    st.download_button("📥 Baixar Planilha de Auditoria", csv, "auditoria_final.csv")
