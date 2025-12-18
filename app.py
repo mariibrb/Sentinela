@@ -95,14 +95,11 @@ with col_sai:
     up_sai_ger = st.file_uploader("⚙️ Regras Gerenciais (Opcional)", type=['xlsx'], key="sai_ger")
 
 # ==============================================================================
-# --- 5. O CÉREBRO ROBUSTO (Lógica "Enorme" Restaurada) ---
+# --- 5. O CÉREBRO ROBUSTO ---
 # ==============================================================================
 
 @st.cache_data
 def carregar_bases_mestre():
-    df_gerencial = pd.DataFrame()
-    df_tribut = pd.DataFrame()
-    df_inter = pd.DataFrame()
     df_tipi = pd.DataFrame()
     df_pc_base = pd.DataFrame()
 
@@ -122,7 +119,6 @@ def carregar_bases_mestre():
     if caminho_tipi:
         try:
             df_raw = pd.read_excel(caminho_tipi, dtype=str)
-            # Adaptação robusta para ler colunas
             df_tipi = df_raw.iloc[:, [0, 1]].copy()
             df_tipi.columns = ['NCM', 'ALIQ']
             df_tipi['NCM'] = df_tipi['NCM'].str.replace(r'\D', '', regex=True).str.zfill(8)
@@ -141,10 +137,10 @@ def carregar_bases_mestre():
                 df_pc_base['CST_SAI'] = df_pc_base['CST_SAI'].str.replace(r'\D', '', regex=True).str.zfill(2)
         except: pass
 
-    return df_gerencial, df_tribut, df_inter, df_tipi, df_pc_base
+    return df_tipi, df_pc_base
 
-# Carrega as bases (usando a função robusta)
-_, _, _, df_tipi, df_pc_base = carregar_bases_mestre()
+# Carrega as bases
+df_tipi, df_pc_base = carregar_bases_mestre()
 
 # Prepara Dicionários para busca rápida
 bases = {"TIPI": {}, "PC": {}}
@@ -154,7 +150,7 @@ if not df_pc_base.empty:
     bases["PC"] = dict(zip(df_pc_base['NCM'], df_pc_base['CST_SAI']))
 
 
-# --- FUNÇÃO DE EXTRAÇÃO DETALHADA (Raio-X Completo) ---
+# --- FUNÇÃO DE EXTRAÇÃO ---
 def extrair_tags_com_raio_x(arquivos_upload, origem):
     itens_validos = []
     arquivos_com_erro = []
@@ -165,18 +161,14 @@ def extrair_tags_com_raio_x(arquivos_upload, origem):
             try: xml_str = content.decode('utf-8')
             except: xml_str = content.decode('latin-1')
 
-            # Limpeza Agressiva de Namespaces (Essencial para não falhar)
             xml_str_clean = re.sub(r' xmlns="[^"]+"', '', xml_str)
             xml_str_clean = re.sub(r' xmlns:xsi="[^"]+"', '', xml_str_clean)
             xml_str_clean = re.sub(r' xsi:schemaLocation="[^"]+"', '', xml_str_clean)
             
             root = ET.fromstring(xml_str_clean)
 
-            # Diagnóstico de arquivo errado
-            if "resNFe" in root.tag or root.find(".//resNFe") is not None:
-                continue # Pula resumo sem erro
-            if "procEventoNFe" in root.tag or root.find(".//retEvento") is not None:
-                continue # Pula evento sem erro
+            if "resNFe" in root.tag or root.find(".//resNFe") is not None: continue
+            if "procEventoNFe" in root.tag or root.find(".//retEvento") is not None: continue
             
             infNFe = root.find('.//infNFe')
             if infNFe is None:
@@ -188,7 +180,6 @@ def extrair_tags_com_raio_x(arquivos_upload, origem):
                 arquivos_com_erro.append({"Arquivo": arquivo.name, "Motivo": "Sem Produtos"})
                 continue
 
-            # Extração Cabeçalho
             ide = root.find(f".//ide")
             emit = root.find(f".//emit")
             dest = root.find(f".//dest")
@@ -198,7 +189,6 @@ def extrair_tags_com_raio_x(arquivos_upload, origem):
                 prod = det.find(f"prod")
                 imposto = det.find(f"imposto")
                 
-                # Funções Helper Internas (do código antigo)
                 def get_val(node, tag, tipo=str):
                     if node is None: return 0.0 if tipo == float else ""
                     res = node.find(f"{tag}")
@@ -216,14 +206,13 @@ def extrair_tags_com_raio_x(arquivos_upload, origem):
                     return ""
 
                 # Valores ICMS
-                cst_icms, bc_icms, aliq_icms, val_icms = "", 0.0, 0.0, 0.0
+                cst_icms, aliq_icms, val_icms = "", 0.0, 0.0
                 if imposto is not None:
                     node_icms = imposto.find(f"ICMS")
                     if node_icms:
                         for child in node_icms:
                             if child.find(f"CST") is not None: cst_icms = child.find(f"CST").text
                             elif child.find(f"CSOSN") is not None: cst_icms = child.find(f"CSOSN").text
-                            if child.find(f"vBC") is not None: bc_icms = float(child.find(f"vBC").text)
                             if child.find(f"pICMS") is not None: aliq_icms = float(child.find(f"pICMS").text)
                             if child.find(f"vICMS") is not None: val_icms = float(child.find(f"vICMS").text)
 
@@ -236,30 +225,20 @@ def extrair_tags_com_raio_x(arquivos_upload, origem):
                             if child.find(f"CST") is not None: cst_ipi = child.find(f"CST").text
                             if child.find(f"pIPI") is not None: aliq_ipi = float(child.find(f"pIPI").text)
 
-                # Difal
-                v_difal = 0.0
-                if imposto is not None:
-                    node_difal = imposto.find(f"ICMSUFDest")
-                    if node_difal and node_difal.find(f"vICMSUFDest") is not None:
-                        v_difal = float(node_difal.find(f"vICMSUFDest").text)
-
                 registro = {
                     "Origem": origem,
                     "Arquivo": arquivo.name,
                     "Número NF": get_val(ide, 'nNF'),
                     "UF Emit": emit.find(f"enderEmit/UF").text if emit is not None and emit.find(f"enderEmit/UF") is not None else "",
                     "UF Dest": dest.find(f"enderDest/UF").text if dest is not None and dest.find(f"enderDest/UF") is not None else "",
-                    "nItem": det.attrib.get('nItem', '0'),
                     "Cód Prod": get_val(prod, 'cProd'),
                     "Desc Prod": get_val(prod, 'xProd'),
                     "NCM": get_val(prod, 'NCM'),
                     "CFOP": get_val(prod, 'CFOP'),
                     "vProd": get_val(prod, 'vProd', float),
                     "CST ICMS": cst_icms,
-                    "BC ICMS": bc_icms,
                     "Alq ICMS": aliq_icms,
                     "ICMS": val_icms,
-                    "ICMS UF Dest": v_difal,
                     "CST IPI": cst_ipi,
                     "Aliq IPI": aliq_ipi,
                     "CST PIS": get_pis_cofins('PIS', 'CST'),
@@ -282,7 +261,6 @@ def cruzar_status(df, file):
     try:
         if file.name.endswith('xlsx'): s = pd.read_excel(file, dtype=str)
         else: s = pd.read_csv(file, dtype=str)
-        # Tenta achar colunas de chave e status pelo conteúdo (geralmente chave é a maior string numérica)
         mapping = dict(zip(s.iloc[:,0].str.replace(r'\D','',regex=True), s.iloc[:,-1]))
         df['Status_Sefaz'] = df['Chave de Acesso'].map(mapping).fillna("Não Localizado")
     except:
@@ -343,21 +321,6 @@ else:
     with tab3:
         if not df_s.empty: st.dataframe(df_s, use_container_width=True)
         
-    st.markdown("<br>", unsafe_allow_html=True)
-    col_dl, _ = st.columns([1,2])
-    with col_dl:
-        buffer = io.BytesIO()
-        with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
-            if not df_e.empty: df_e.to_excel(writer, sheet_name='Entradas', index=False)
-            if not df_s.empty: df_s.to_excel(writer, sheet_name='Saidas', index=False)
-            
-        st.download_button(
-            label="💾 BAIXAR RELATÓRIO COMPLETO",
-            data=buffer.getvalue(),
-            file_name="Relatorio_Nascel_Auditoria.xlsx",
-            mime="application/vnd.ms-excel"
-            # ... (Seu código anterior termina na exibição das abas)
-
     # ========================================================
     # 🧠 INTELIGÊNCIA: SUGESTÃO DE ATUALIZAÇÃO DE BASES
     # ========================================================
@@ -366,33 +329,37 @@ else:
     st.info("O Sentinela identificou itens nos XMLs que **não estão cadastrados** nas suas bases atuais. Baixe a planilha abaixo para atualizar seus arquivos mestres.")
 
     # 1. Preparar dados consolidados (Entradas + Saídas)
-    cols_uteis = ['NCM', 'Desc Prod', 'Aliq_IPI', 'CST_PIS', 'CST_COFINS']
     
-    # Padroniza nomes das colunas para unir
-    df_e_mini = df_e.rename(columns={'Desc Prod': 'Descricao', 'Aliq IPI': 'Aliq_IPI', 'CST PIS': 'CST_PIS', 'CST COFINS': 'CST_COFINS'})[['NCM', 'Descricao', 'Aliq_IPI', 'CST_PIS', 'CST_COFINS']] if not df_e.empty else pd.DataFrame()
-    df_s_mini = df_s.rename(columns={'Desc Prod': 'Descricao', 'Aliq IPI': 'Aliq_IPI', 'CST PIS': 'CST_PIS', 'CST COFINS': 'CST_COFINS'})[['NCM', 'Descricao', 'Aliq_IPI', 'CST_PIS', 'CST_COFINS']] if not df_s.empty else pd.DataFrame()
+    # Renomeia colunas para unificar
+    # Usa nomes seguros que existem nas funções de extração
+    df_e_mini = pd.DataFrame()
+    if not df_e.empty:
+        df_e_mini = df_e.rename(columns={'Desc Prod': 'Descricao', 'Aliq IPI': 'Aliq_IPI', 'CST PIS': 'CST_PIS', 'CST COFINS': 'CST_COFINS'})
+        df_e_mini = df_e_mini[['NCM', 'Descricao', 'Aliq_IPI', 'CST_PIS', 'CST_COFINS']]
+    
+    df_s_mini = pd.DataFrame()
+    if not df_s.empty:
+        df_s_mini = df_s.rename(columns={'Desc Prod': 'Descricao', 'Aliq IPI': 'Aliq_IPI', 'CST PIS': 'CST_PIS', 'CST COFINS': 'CST_COFINS'})
+        df_s_mini = df_s_mini[['NCM', 'Descricao', 'Aliq_IPI', 'CST_PIS', 'CST_COFINS']]
     
     df_full = pd.concat([df_e_mini, df_s_mini], ignore_index=True)
 
     if not df_full.empty:
         # A. NOVOS PARA TIPI
-        # Filtra NCMs que NÃO estão na base TIPI atual
         novos_tipi = df_full[~df_full['NCM'].isin(bases.get('TIPI', {}).keys())].copy()
         
+        sugestao_tipi = pd.DataFrame()
         if not novos_tipi.empty:
-            # Agrupa por NCM para não repetir e pega a moda (valor mais frequente) da alíquota
             sugestao_tipi = novos_tipi.groupby('NCM').agg({
-                'Descricao': 'first', # Pega a primeira descrição que achar
-                'Aliq_IPI': lambda x: x.mode()[0] if not x.mode().empty else 0.0 # Sugere a alíquota mais usada
+                'Descricao': 'first',
+                'Aliq_IPI': lambda x: x.mode()[0] if not x.mode().empty else 0.0
             }).reset_index()
             sugestao_tipi.columns = ['NCM', 'Descrição Sugerida', 'Alíquota XML (Sugestão)']
-        else:
-            sugestao_tipi = pd.DataFrame()
 
         # B. NOVOS PARA PIS/COFINS
-        # Filtra NCMs que NÃO estão na base PC atual
         novos_pc = df_full[~df_full['NCM'].isin(bases.get('PC', {}).keys())].copy()
         
+        sugestao_pc = pd.DataFrame()
         if not novos_pc.empty:
             sugestao_pc = novos_pc.groupby('NCM').agg({
                 'Descricao': 'first',
@@ -400,8 +367,6 @@ else:
                 'CST_COFINS': lambda x: x.mode()[0] if not x.mode().empty else ''
             }).reset_index()
             sugestao_pc.columns = ['NCM', 'Descrição Sugerida', 'CST PIS (XML)', 'CST COF (XML)']
-        else:
-            sugestao_pc = pd.DataFrame()
 
         # C. BOTÃO DE DOWNLOAD DA ATUALIZAÇÃO
         if not sugestao_tipi.empty or not sugestao_pc.empty:
@@ -423,6 +388,24 @@ else:
                     file_name="Sugestao_Atualizacao_Bases.xlsx",
                     mime="application/vnd.ms-excel",
                     key="btn_update"
+                )
         else:
             st.success("✨ Suas bases estão 100% atualizadas com os XMLs analisados!")
+            
+    # ========================================================
+    # DOWNLOAD RELATÓRIO FINAL
+    # ========================================================
+    st.markdown("<br>", unsafe_allow_html=True)
+    col_dl, _ = st.columns([1,2])
+    with col_dl:
+        buffer = io.BytesIO()
+        with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
+            if not df_e.empty: df_e.to_excel(writer, sheet_name='Entradas', index=False)
+            if not df_s.empty: df_s.to_excel(writer, sheet_name='Saidas', index=False)
+            
+        st.download_button(
+            label="💾 BAIXAR RELATÓRIO COMPLETO",
+            data=buffer.getvalue(),
+            file_name="Relatorio_Nascel_Auditoria.xlsx",
+            mime="application/vnd.ms-excel"
         )
