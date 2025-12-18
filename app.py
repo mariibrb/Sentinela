@@ -10,10 +10,10 @@ st.set_page_config(
     page_title="Nascel | Auditoria",
     page_icon="🧡",
     layout="wide",
-    initial_sidebar_state="collapsed" # Começa fechada para focar no meio
+    initial_sidebar_state="collapsed"
 )
 
-# CSS PERSONALIZADO (A Mágica do Design)
+# CSS PERSONALIZADO (Mantendo o estilo "fofo" aprovado)
 st.markdown("""
     <style>
     @import url('https://fonts.googleapis.com/css2?family=Quicksand:wght@400;600;700&display=swap');
@@ -72,27 +72,38 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# --- 2. LOGO NA BARRA LATERAL (E SÓ ISSO) ---
+# --- 2. SIDEBAR (AJUSTE 1: N Maiúsculo) ---
 with st.sidebar:
     if os.path.exists("logo_nascel.png"):
         st.image("logo_nascel.png", use_column_width=True)
     else:
-        st.markdown("<h1 style='color:#FF6F00; text-align:center;'>nascel</h1>", unsafe_allow_html=True)
+        # AJUSTE AQUI: N maiúsculo
+        st.markdown("<h1 style='color:#FF6F00; text-align:center;'>Nascel</h1>", unsafe_allow_html=True)
     
     st.markdown("---")
     st.info("💡 **Dica:** Carregue os arquivos nas caixas ao centro para iniciar.")
 
-# --- 3. ÁREA DE UPLOAD NO MEIO DA TELA (OS 6 BOTÕES) ---
+# --- 3. ÁREA PRINCIPAL (AJUSTE 2: Imagem Sentinela) ---
 
-st.title("🛡️ Painel de Auditoria Nascel")
-st.markdown("Carregue seus arquivos abaixo para gerar o relatório automático.")
+# Tenta carregar a imagem banner, se não tiver, usa um título texto como fallback
+if os.path.exists("sentinela_banner.png"):
+    # Centralizando a imagem
+    col_spacer1, col_img, col_spacer2 = st.columns([1, 4, 1])
+    with col_img:
+        st.image("sentinela_banner.png", use_column_width=True)
+else:
+    # Fallback se a imagem não estiver na pasta
+    st.markdown("<h1 style='text-align: center; color: #FF6F00; font-size: 3em;'>SENTINELA</h1>", unsafe_allow_html=True)
+    st.markdown("<h3 style='text-align: center; color: #666;'>Sistema de Auditoria Fiscal Nascel</h3>", unsafe_allow_html=True)
 
+st.markdown("<br>", unsafe_allow_html=True) # Espaço
+
+# --- ÁREA DE UPLOAD (OS 6 BOTÕES NO MEIO) ---
 col_ent, col_sai = st.columns(2, gap="large")
 
 with col_ent:
     st.markdown("### 📥 1. Entradas")
     st.markdown("---")
-    # Aqui estão os 3 botões de Entrada, bem visíveis no meio
     up_ent_xml = st.file_uploader("📂 XMLs de Notas Fiscais", type='xml', accept_multiple_files=True, key="ent_xml")
     up_ent_aut = st.file_uploader("🔍 Relatório Autenticidade (Sefaz)", type=['xlsx', 'csv'], key="ent_aut")
     up_ent_ger = st.file_uploader("⚙️ Regras Gerenciais (Opcional)", type=['xlsx'], key="ent_ger")
@@ -100,12 +111,11 @@ with col_ent:
 with col_sai:
     st.markdown("### 📤 2. Saídas")
     st.markdown("---")
-    # Aqui estão os 3 botões de Saída, bem visíveis no meio
     up_sai_xml = st.file_uploader("📂 XMLs de Notas Fiscais", type='xml', accept_multiple_files=True, key="sai_xml")
     up_sai_aut = st.file_uploader("🔍 Relatório Autenticidade (Sefaz)", type=['xlsx', 'csv'], key="sai_aut")
     up_sai_ger = st.file_uploader("⚙️ Regras Gerenciais (Opcional)", type=['xlsx'], key="sai_ger")
 
-# --- 4. LÓGICA DO SISTEMA (Processamento) ---
+# --- 4. LÓGICA DO SISTEMA (CÓDIGO ORIGINAL PERFEITO) ---
 
 # Carregar Bases TIPI/PIS (Invisível)
 @st.cache_data
@@ -128,7 +138,7 @@ def processar_xml(files, tipo):
             raw = f.read()
             try: txt = raw.decode('utf-8')
             except: txt = raw.decode('latin-1')
-            txt = re.sub(r' xmlns="[^"]+"', '', txt) # Tira namespace
+            txt = re.sub(r' xmlns="[^"]+"', '', txt)
             root = ET.fromstring(txt)
             
             if 'resNFe' in root.tag or 'procEvento' in root.tag: continue
@@ -212,7 +222,7 @@ df_s = auditar_ipi(cruzar_status(processar_xml(up_sai_xml, "Saída"), up_sai_aut
 st.markdown("---")
 
 if df_e.empty and df_s.empty:
-    st.info("👆 Aguardando arquivos... Carregue os XMLs acima.")
+    st.info("👆 Aguardando arquivos... Carregue os XMLs e relatórios nas caixas acima.")
 else:
     st.markdown("## 📊 Resultados da Análise")
     
