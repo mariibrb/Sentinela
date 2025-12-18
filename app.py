@@ -136,10 +136,10 @@ with col_ent:
     st.markdown("### 📥 1. Entradas")
     st.markdown("---")
     up_ent_xml = st.file_uploader("📂 XMLs", type='xml', accept_multiple_files=True, key="ent_xml")
-    up_ent_aut = st.file_uploader("🔍 Autenticidade Entradas", type=['xlsx', 'csv'], key="ent_aut")
+    up_ent_aut = st.file_uploader("🔍 Autenticidade", type=['xlsx', 'csv'], key="ent_aut")
 
 with col_sai:
     st.markdown("### 📤 2. Saídas")
     st.markdown("---")
     up_sai_xml = st.file_uploader("📂 XMLs", type='xml', accept_multiple_files=True, key="sai_xml")
-    up_sai_aut = st.file_uploader("🔍 Autenticidade Saídas", type=['xlsx', 'csv'], key="sai_aut")
+    up_sai_aut = st.file_uploader("🔍 Autenticidade", type=['xlsx', 'csv'], key="sai_aut")
