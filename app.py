@@ -56,4 +56,67 @@ def extrair_tags_estilo_query(xml_content):
             "Aliq IPI": float(imposto.find('.//nfe:IPI//nfe:pIPI', ns).text) if imposto.find('.//nfe:IPI//nfe:pIPI', ns) is not None else 0.0,
             "IPI": float(imposto.find('.//nfe:IPI//nfe:vIPI', ns).text) if imposto.find('.//nfe:IPI//nfe:vIPI', ns) is not None else 0.0,
             "CST PIS": imposto.find('.//nfe:PIS//nfe:CST', ns).text if imposto.find('.//nfe:PIS//nfe:CST', ns) is not None else "",
-            "BC PIS": float(imposto.find('.//nfe:PIS
+            "BC PIS": float(imposto.find('.//nfe:PIS//nfe:vBC', ns).text) if imposto.find('.//nfe:PIS//nfe:vBC', ns) is not None else 0.0,
+            "Aliq PIS": float(imposto.find('.//nfe:PIS//nfe:pPIS', ns).text) if imposto.find('.//nfe:PIS//nfe:pPIS', ns) is not None else 0.0,
+            "PIS": float(imposto.find('.//nfe:PIS//nfe:vPIS', ns).text) if imposto.find('.//nfe:PIS//nfe:vPIS', ns) is not None else 0.0,
+            "CST COFINS": imposto.find('.//nfe:COFINS//nfe:CST', ns).text if imposto.find('.//nfe:COFINS//nfe:CST', ns) is not None else "",
+            "BC COFINS": float(imposto.find('.//nfe:COFINS//nfe:vBC', ns).text) if imposto.find('.//nfe:COFINS//nfe:vBC', ns) is not None else 0.0,
+            "Aliq COFINS": float(imposto.find('.//nfe:COFINS//nfe:pCOFINS', ns).text) if imposto.find('.//nfe:COFINS//nfe:pCOFINS', ns) is not None else 0.0,
+            "COFINS": float(imposto.find('.//nfe:COFINS//nfe:vCOFINS', ns).text) if imposto.find('.//nfe:COFINS//nfe:vCOFINS', ns) is not None else 0.0,
+            "FCP": float(imposto.find('.//nfe:vFCP', ns).text) if imposto.find('.//nfe:vFCP', ns) is not None else 0.0,
+            "ICMS UF Dest": float(imposto.find('.//nfe:vICMSUFDest', ns).text) if imposto.find('.//nfe:vICMSUFDest', ns) is not None else 0.0,
+            "Chave de Acesso": chave
+        }
+        itens_extraidos.append(registro)
+    return itens_extraidos
+
+# Interface Streamlit
+st.sidebar.header("Configurações")
+xml_files = st.file_uploader("1. Selecione os ficheiros XML", accept_multiple_files=True, type='xml')
+report_file = st.file_uploader("2. Selecione o Relatório de Status (Coluna AP)", type=['xlsx', 'csv'])
+
+if xml_files and report_file:
+    # Lendo o Relatório de Status
+    if report_file.name.endswith('.csv'):
+        df_status = pd.read_csv(report_file)
+    else:
+        df_status = pd.read_excel(report_file)
+    
+    # Padronizando colunas do relatório de status (Garante que tenha 'Chave' e 'Status')
+    # Ajuste o nome da coluna de status conforme seu relatório (ex: 'Situação', 'Status')
+    df_status.columns = [str(c).strip() for c in df_status.columns]
+    
+    lista_consolidada = []
+    for f in xml_files:
+        dados_xml = extrair_tags_estilo_query(f.read())
+        lista_consolidada.extend(dados_xml)
+    
+    if lista_consolidada:
+        df_base = pd.DataFrame(lista_consolidada)
+        
+        # --- LÓGICA DA COLUNA AP ---
+        # Cruzamos o DataFrame dos XMLs com o DataFrame do Relatório pela "Chave de Acesso"
+        # Supomos que no seu relatório a coluna se chama 'Chave de Acesso' e 'Situação'
+        # Se os nomes forem diferentes, o código tenta identificar
+        col_chave_relatorio = 'Chave de Acesso' if 'Chave de Acesso' in df_status.columns else df_status.columns[0]
+        col_status_relatorio = 'Situação' if 'Situação' in df_status.columns else df_status.columns[-1]
+
+        # Criando dicionário para busca rápida
+        status_dict = pd.Series(df_status[col_status_relatorio].values, index=df_status[col_chave_relatorio].astype(str)).to_dict()
+        
+        # Preenchendo a Coluna AP
+        df_base['AP'] = df_base['Chave de Acesso'].map(status_dict).fillna("Chave não encontrada no relatório")
+        
+        st.write(f"### Processamento Concluído: {len(df_base)} itens.")
+        st.dataframe(df_base.head(10))
+        
+        buffer = io.BytesIO()
+        with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
+            df_base.to_excel(writer, index=False, sheet_name='Base_XML')
+            
+        st.download_button(
+            label="📥 Baixar Base_XML com Coluna AP",
+            data=buffer.getvalue(),
+            file_name="Sentinela_Base_AP.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
