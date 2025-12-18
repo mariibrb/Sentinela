@@ -1,5 +1,5 @@
 [server]
-maxUploadSize = 50000
+maxUploadSize = 2000
 runOnSave = true
 
 [theme]
