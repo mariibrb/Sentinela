@@ -72,18 +72,16 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# --- 2. SIDEBAR (AJUSTE 1: N Maiúsculo) ---
+# --- 2. SIDEBAR (AJUSTE: Logo Direto) ---
 with st.sidebar:
-    if os.path.exists("logo_nascel.png"):
-        st.image("logo_nascel.png", use_column_width=True)
-    else:
-        # AJUSTE AQUI: N maiúsculo
-        st.markdown("<h1 style='color:#FF6F00; text-align:center;'>Nascel</h1>", unsafe_allow_html=True)
+    # Aqui chamamos o logo diretamente. 
+    # Certifique-se que o arquivo 'logo_nascel.png' está na raiz do seu GitHub.
+    st.image("logo_nascel.png", use_column_width=True)
     
     st.markdown("---")
     st.info("💡 **Dica:** Carregue os arquivos nas caixas ao centro para iniciar.")
 
-# --- 3. ÁREA PRINCIPAL (AJUSTE 2: Imagem Sentinela) ---
+# --- 3. ÁREA PRINCIPAL (Imagem Sentinela) ---
 
 # Tenta carregar a imagem banner, se não tiver, usa um título texto como fallback
 if os.path.exists("sentinela_banner.png"):
