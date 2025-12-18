@@ -9,7 +9,7 @@ import os
 st.set_page_config(page_title="Sentinela Fiscal Pro", layout="wide")
 st.title("🛡️ Sentinela: Auditoria Fiscal (ICMS & IPI)")
 
-# --- 1. CARREGAR BASES MESTRE + TIPI (FORÇA BRUTA) ---
+# --- 1. CARREGAR BASES MESTRE + TIPI (MODO EMERGÊNCIA) ---
 @st.cache_data
 def carregar_bases_mestre():
     # A. Bases Internas
@@ -23,71 +23,46 @@ def carregar_bases_mestre():
     else:
         return None, None, None, None
 
-    # B. TIPI Oficial (Lógica Força Bruta)
+    # B. TIPI Oficial (Lógica Direta Coluna A e B)
     caminho_tipi = "TIPI.xlsx"
     df_tipi = pd.DataFrame()
     
     if os.path.exists(caminho_tipi):
         try:
-            # Lê tudo como texto
-            df_raw = pd.read_excel(caminho_tipi, header=None, dtype=str)
+            # Lê o Excel ignorando cabeçalho (header=None) e forçando tudo como texto
+            # O engine='openpyxl' é o padrão para xlsx, garantindo compatibilidade
+            df_raw = pd.read_excel(caminho_tipi, header=None, dtype=str, engine='openpyxl')
             
-            # 1. Limpeza Prévia: Remove pontos de TODAS as células para achar NCMs numéricos
-            # Cria uma cópia para análise
-            df_check = df_raw.replace(r'[.]', '', regex=True)
+            # ESTRATÉGIA: Filtrar linhas onde a COLUNA 0 (A) parece um NCM com pontos
+            # Regex: 4 digitos + ponto + 2 digitos + ponto + 2 digitos (Ex: 0101.21.00)
+            mask_ncm = df_raw.iloc[:, 0].str.contains(r'^\d{4}\.\d{2}\.\d{2}', regex=True, na=False)
             
-            col_ncm = -1
+            # Aplica o filtro
+            df_tipi = df_raw[mask_ncm].copy()
             
-            # 2. Varredura: Procura coluna com 8 dígitos
-            for i in range(len(df_check.columns)):
-                # Conta quantos valores têm exatamente 8 dígitos (Ex: 01012100)
-                matches = df_check.iloc[:, i].astype(str).str.match(r'^\d{8}$').sum()
+            # Se achou dados
+            if not df_tipi.empty:
+                # Pega Coluna A (0) como NCM e Coluna B (1) como Alíquota
+                # Se a alíquota estiver na coluna C, mude o [0, 1] para [0, 2] abaixo
+                df_tipi = df_tipi.iloc[:, [0, 1]] 
+                df_tipi.columns = ['NCM', 'ALIQ']
                 
-                # Se encontrar mais de 50 ocorrências, assumimos que é a coluna de NCM
-                if matches > 50:
-                    col_ncm = i
-                    break
-            
-            if col_ncm != -1:
-                # Filtra apenas linhas válidas (que são NCM)
-                mask = df_check.iloc[:, col_ncm].astype(str).str.match(r'^\d{8}$')
-                df_clean = df_raw[mask].copy() # Pega do original para manter formatação se houver
-                
-                # 3. Radar de Alíquota (Procura a coluna certa à direita)
-                # A TIPI oficial geralmente é: NCM | Descrição | Alíquota
-                # Vamos testar Coluna+1 e Coluna+2
-                col_aliq = -1
-                
-                # Pega amostra das colunas vizinhas
-                try:
-                    # Teste Coluna + 1
-                    sample1 = df_clean.iloc[:, col_ncm + 1].astype(str).str.upper()
-                    if sample1.str.contains('NT').any() or sample1.str.contains(r'^\d').any():
-                        col_aliq = col_ncm + 1
-                    
-                    # Teste Coluna + 2 (Caso a +1 seja Descrição)
-                    # Se a coluna +1 tiver textos muito longos (média > 10 chars), provavelmente é descrição
-                    if df_clean.iloc[:, col_ncm + 1].astype(str).str.len().mean() > 10:
-                        col_aliq = col_ncm + 2
-                except:
-                    # Se der erro de índice (fim da tabela), tenta pegar a última
-                    col_aliq = col_ncm + 1
-
-                # Extração Final
-                if col_aliq != -1 and col_aliq < len(df_clean.columns):
-                    df_tipi = df_clean.iloc[:, [col_ncm, col_aliq]]
-                    df_tipi.columns = ['NCM', 'ALIQ']
-                    
-                    # Tratamento
-                    df_tipi['NCM'] = df_tipi['NCM'].astype(str).str.replace('.', '', regex=False).str.strip()
-                    df_tipi['ALIQ'] = df_tipi['ALIQ'].astype(str).str.upper().replace('NT', '0').str.strip().str.replace(',', '.')
-                else:
-                    st.warning("⚠️ Encontrei NCM, mas não achei a coluna de Alíquota.")
+                # Limpeza: Tira pontos do NCM e trata a Alíquota
+                df_tipi['NCM'] = df_tipi['NCM'].str.replace('.', '', regex=False).str.strip()
+                df_tipi['ALIQ'] = df_tipi['ALIQ'].str.upper().replace('NT', '0').str.strip().str.replace(',', '.')
             else:
-                st.warning("⚠️ Não encontrei coluna de NCM (8 dígitos) na TIPI.")
+                # DEBUG: Se não achou com pontos, tenta achar sem pontos (apenas 8 digitos)
+                mask_ncm_sem_ponto = df_raw.iloc[:, 0].str.match(r'^\d{8}$', na=False)
+                df_tipi = df_raw[mask_ncm_sem_ponto].copy()
+                if not df_tipi.empty:
+                    df_tipi = df_tipi.iloc[:, [0, 1]]
+                    df_tipi.columns = ['NCM', 'ALIQ']
+                    df_tipi['ALIQ'] = df_tipi['ALIQ'].str.upper().replace('NT', '0').str.strip().str.replace(',', '.')
+                else:
+                    st.error("Erro: O arquivo TIPI.xlsx foi lido, mas não encontrei códigos NCM na Coluna A.")
 
         except Exception as e:
-            st.error(f"Erro ao ler TIPI: {e}")
+            st.error(f"Erro fatal ao ler TIPI.xlsx: {e}")
             df_tipi = pd.DataFrame()
 
     return df_gerencial, df_tribut, df_inter, df_tipi
@@ -184,10 +159,10 @@ if (xml_saidas or xml_entradas) and rel_status:
             map_inter = dict(zip(df_inter.iloc[:, 0].astype(str), df_inter.iloc[:, 1].astype(str)))
         
         # Mapeamento TIPI
-        if not df_tipi.empty and 'NCM' in df_tipi.columns and 'ALIQ' in df_tipi.columns:
+        if not df_tipi.empty and 'NCM' in df_tipi.columns:
             map_tipi = dict(zip(df_tipi['NCM'], df_tipi['ALIQ']))
         else:
-            st.warning("⚠️ TIPI não carregada. Verifique o arquivo.")
+            st.warning("⚠️ TIPI não carregada corretamente.")
 
         # === ICMS ===
         df_icms = df_s.copy()
