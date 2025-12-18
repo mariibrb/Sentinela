@@ -36,11 +36,9 @@ st.markdown("""
 # --- 2. SIDEBAR (LOGO NASCEL) ---
 with st.sidebar:
     caminho_logo = ".streamlit/nascel sem fundo.png"
-    
     if os.path.exists(caminho_logo):
         st.image(caminho_logo, use_column_width=True)
     else:
-        # Tenta na raiz como fallback
         if os.path.exists("nascel sem fundo.png"):
             st.image("nascel sem fundo.png", use_column_width=True)
         else:
@@ -49,23 +47,21 @@ with st.sidebar:
     st.markdown("---")
     st.info("💡 **Dica:** Carregue os arquivos nas caixas ao centro para iniciar.")
 
-# --- 3. ÁREA PRINCIPAL (NOVO TÍTULO SENTINELA) ---
+# --- 3. ÁREA PRINCIPAL (TÍTULO SENTINELA AJUSTADO) ---
 
 # Caminho da nova imagem gerada (sem fundo)
 caminho_titulo = ".streamlit/Sentinela.png"
 
 if os.path.exists(caminho_titulo):
-    # Centralizando a imagem do título usando colunas
-    # Ajustei as proporções para a imagem ficar num tamanho bom no topo
-    col_c1, col_tit, col_c2 = st.columns([1, 8, 1])
+    # AJUSTE AQUI: Colunas laterais maiores (3) fazem a imagem do meio (4) ficar menor
+    col_c1, col_tit, col_c2 = st.columns([3, 4, 3])
     with col_tit:
         st.image(caminho_titulo, use_column_width=True)
 else:
-    # Fallback caso a imagem não seja encontrada na pasta .streamlit
     st.markdown("<h1 style='text-align: center; color: #FF6F00; font-size: 3em;'>SENTINELA</h1>", unsafe_allow_html=True)
     st.markdown("<h3 style='text-align: center; color: #666;'>Sistema de Auditoria Fiscal</h3>", unsafe_allow_html=True)
 
-st.markdown("<br><br>", unsafe_allow_html=True) # Espaço extra após o título
+st.markdown("<br>", unsafe_allow_html=True)
 
 # --- ÁREA DE UPLOAD ---
 col_ent, col_sai = st.columns(2, gap="large")
