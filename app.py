@@ -6,12 +6,9 @@ import re
 import os
 
 st.set_page_config(page_title="Sentinela Fiscal Pro", layout="wide")
+st.title("🛡️ Sentinela: Entradas, Saídas e Auditoria ICMS")
 
-# Título Principal
-st.title("🛡️ Sentinela Fiscal: Auditoria Inteligente")
-st.markdown("---")
-
-# --- 1. CARREGAR BASES MESTRE (CONFIGURAÇÃO INTERNA) ---
+# --- 1. CARREGAR BASES MESTRE (GITHUB) ---
 @st.cache_data
 def carregar_bases_mestre():
     caminho_mestre = "Sentinela_MIRÃO_Outubro2025.xlsx"
@@ -24,7 +21,7 @@ def carregar_bases_mestre():
 
 df_gerencial, df_tribut = carregar_bases_mestre()
 
-# --- 2. FUNÇÃO DE EXTRAÇÃO (PADRÃO POWER QUERY) ---
+# --- 2. FUNÇÃO DE EXTRAÇÃO (FORMATO APROVADO BASE_XML) ---
 def extrair_tags_estilo_query(xml_content):
     ns = {'nfe': 'http://www.portalfiscal.inf.br/nfe'}
     try:
@@ -51,95 +48,99 @@ def extrair_tags_estilo_query(xml_content):
             "UF Dest": dest.find('nfe:enderDest/nfe:UF', ns).text if dest is not None else "",
             "dest.CPF": dest.find('nfe:CPF', ns).text if dest is not None and dest.find('nfe:CPF', ns) is not None else "",
             "dest.CNPJ": dest.find('nfe:CNPJ', ns).text if dest is not None and dest.find('nfe:CNPJ', ns) is not None else "",
+            "dest.IE": dest.find('nfe:IE', ns).text if dest is not None and dest.find('nfe:IE', ns) is not None else "",
             "nItem": det.attrib['nItem'],
             "Cód Prod": prod.find('nfe:cProd', ns).text if prod is not None else "",
             "Desc Prod": prod.find('nfe:xProd', ns).text if prod is not None else "",
             "NCM": prod.find('nfe:NCM', ns).text if prod is not None else "",
+            "CEST": prod.find('nfe:CEST', ns).text if prod is not None and prod.find('nfe:CEST', ns) is not None else "",
             "CFOP": prod.find('nfe:CFOP', ns).text if prod is not None else "",
             "vProd": float(prod.find('nfe:vProd', ns).text) if prod is not None else 0.0,
+            "vDesc": float(prod.find('nfe:vDesc', ns).text) if prod is not None and prod.find('nfe:vDesc', ns) is not None else 0.0,
+            "Origem": imposto.find('.//nfe:orig', ns).text if imposto.find('.//nfe:orig', ns) is not None else "",
             "CST ICMS": imposto.find('.//nfe:CST', ns).text if imposto.find('.//nfe:CST', ns) is not None else "",
+            "BC ICMS": float(imposto.find('.//nfe:vBC', ns).text) if imposto.find('.//nfe:vBC', ns) is not None else 0.0,
+            "Alq ICMS": float(imposto.find('.//nfe:pICMS', ns).text) if imposto.find('.//nfe:pICMS', ns) is not None else 0.0,
+            "ICMS": float(imposto.find('.//nfe:vICMS', ns).text) if imposto.find('.//nfe:vICMS', ns) is not None else 0.0,
+            "pRedBC ICMS": float(imposto.find('.//nfe:pRedBC', ns).text) if imposto.find('.//nfe:pRedBC', ns) is not None else 0.0,
+            "BC ICMS-ST": float(imposto.find('.//nfe:vBCST', ns).text) if imposto.find('.//nfe:vBCST', ns) is not None else 0.0,
+            "ICMS-ST": float(imposto.find('.//nfe:vICMSST', ns).text) if imposto.find('.//nfe:vICMSST', ns) is not None else 0.0,
+            "FCPST": float(imposto.find('.//nfe:vFCPST', ns).text) if imposto.find('.//nfe:vFCPST', ns) is not None else 0.0,
+            "CST IPI": imposto.find('.//nfe:IPI//nfe:CST', ns).text if imposto.find('.//nfe:IPI//nfe:CST', ns) is not None else "",
+            "BC IPI": float(imposto.find('.//nfe:IPI//nfe:vBC', ns).text) if imposto.find('.//nfe:IPI//nfe:vBC', ns) is not None else 0.0,
+            "Aliq IPI": float(imposto.find('.//nfe:IPI//nfe:pIPI', ns).text) if imposto.find('.//nfe:IPI//nfe:pIPI', ns) is not None else 0.0,
+            "IPI": float(imposto.find('.//nfe:IPI//nfe:vIPI', ns).text) if imposto.find('.//nfe:IPI//nfe:vIPI', ns) is not None else 0.0,
+            "CST PIS": imposto.find('.//nfe:PIS//nfe:CST', ns).text if imposto.find('.//nfe:PIS//nfe:CST', ns) is not None else "",
+            "BC PIS": float(imposto.find('.//nfe:vBC', ns).text) if imposto.find('.//nfe:vBC', ns) is not None else 0.0,
+            "Aliq PIS": float(imposto.find('.//nfe:pPIS', ns).text) if imposto.find('.//nfe:pPIS', ns) is not None else 0.0,
+            "PIS": float(imposto.find('.//nfe:vPIS', ns).text) if imposto.find('.//nfe:vPIS', ns) is not None else 0.0,
+            "CST COFINS": imposto.find('.//nfe:COFINS//nfe:CST', ns).text if imposto.find('.//nfe:COFINS//nfe:CST', ns) is not None else "",
+            "BC COFINS": float(imposto.find('.//nfe:vBC', ns).text) if imposto.find('.//nfe:vBC', ns) is not None else 0.0,
+            "Aliq COFINS": float(imposto.find('.//nfe:pCOFINS', ns).text) if imposto.find('.//nfe:pCOFINS', ns) is not None else 0.0,
+            "COFINS": float(imposto.find('.//nfe:vCOFINS', ns).text) if imposto.find('.//nfe:vCOFINS', ns) is not None else 0.0,
+            "FCP": float(imposto.find('.//nfe:vFCP', ns).text) if imposto.find('.//nfe:vFCP', ns) is not None else 0.0,
+            "ICMS UF Dest": float(imposto.find('.//nfe:vICMSUFDest', ns).text) if imposto.find('.//nfe:vICMSUFDest', ns) is not None else 0.0,
             "Chave de Acesso": chave
         }
         itens.append(registro)
     return itens
 
-# --- 3. MENU LATERAL DE UPLOAD COM EXPLICAÇÕES ---
+# --- 3. INTERFACE ---
 with st.sidebar:
-    st.header("📂 Central de Upload")
-    st.info("Siga a ordem abaixo para processar os dados:")
-    
-    st.subheader("1. Vendas")
-    xml_saidas = st.file_uploader("Suba aqui os XMLs de SAÍDA", accept_multiple_files=True, type='xml')
-    
-    st.subheader("2. Compras")
-    xml_entradas = st.file_uploader("Suba aqui os XMLs de ENTRADA", accept_multiple_files=True, type='xml')
-    
-    st.subheader("3. Autenticidade")
-    rel_status = st.file_uploader("Relatório de Status (Chave na A, Status na F)", type=['xlsx', 'csv'])
+    st.header("📂 Upload Central")
+    xml_saidas = st.file_uploader("1. Notas de SAÍDA", accept_multiple_files=True, type='xml')
+    xml_entradas = st.file_uploader("2. Notas de ENTRADA", accept_multiple_files=True, type='xml')
+    rel_status = st.file_uploader("3. Relatório Autenticidade (Chave A, Status F)", type=['xlsx', 'csv'])
 
 # --- 4. PROCESSAMENTO ---
 if (xml_saidas or xml_entradas) and rel_status:
-    # Carregar Relatório de Autenticidade
-    df_status_rel = pd.read_excel(rel_status, dtype=str) if rel_status.name.endswith('.xlsx') else pd.read_csv(rel_status, dtype=str)
-    # Limpa chaves do relatório
-    chaves_limpas = df_status_rel.iloc[:, 0].str.replace(r'\D', '', regex=True)
-    status_dict = dict(zip(chaves_limpas, df_status_rel.iloc[:, 5]))
+    # Status Dictionary
+    df_st_rel = pd.read_excel(rel_status, dtype=str) if rel_status.name.endswith('.xlsx') else pd.read_csv(rel_status, dtype=str)
+    status_dict = dict(zip(df_st_rel.iloc[:, 0].str.replace(r'\D', '', regex=True).str.strip(), df_st_rel.iloc[:, 5].str.strip()))
 
     # Processar Saídas
-    df_saida = pd.DataFrame()
+    df_saidas = pd.DataFrame()
     if xml_saidas:
-        dados_saida = []
-        for f in xml_saidas: dados_saida.extend(extrair_tags_estilo_query(f.read()))
-        df_saida = pd.DataFrame(dados_saida)
-        df_saida['AP'] = df_saida['Chave de Acesso'].str.replace(r'\D', '', regex=True).map(status_dict).fillna("Pendente")
-        df_saida['Tipo'] = "SAÍDA"
+        list_s = []
+        for f in xml_saidas: list_s.extend(extrair_tags_estilo_query(f.read()))
+        df_saidas = pd.DataFrame(list_s)
+        df_saidas['AP'] = df_saidas['Chave de Acesso'].str.replace(r'\D', '', regex=True).map(status_dict).fillna("Pendente")
 
     # Processar Entradas
-    df_entrada = pd.DataFrame()
+    df_entradas = pd.DataFrame()
     if xml_entradas:
-        dados_entrada = []
-        for f in xml_entradas: dados_entrada.extend(extrair_tags_estilo_query(f.read()))
-        df_entrada = pd.DataFrame(dados_entrada)
-        df_entrada['AP'] = df_entrada['Chave de Acesso'].str.replace(r'\D', '', regex=True).map(status_dict).fillna("Pendente")
-        df_entrada['Tipo'] = "ENTRADA"
+        list_e = []
+        for f in xml_entradas: list_e.extend(extrair_tags_estilo_query(f.read()))
+        df_entradas = pd.DataFrame(list_e)
+        df_entradas['AP'] = df_entradas['Chave de Acesso'].str.replace(r'\D', '', regex=True).map(status_dict).fillna("Pendente")
 
-    # Criar Base_XML (Consolidada)
-    df_base = pd.concat([df_saida, df_entrada], ignore_index=True)
+    # Aba Base_XML (Consolidado)
+    df_base_xml = pd.concat([df_saidas, df_entradas], ignore_index=True)
 
-    # --- LÓGICA DA COLUNA ANÁLISE CST (IGUAL AO SEU EXCEL) ---
-    if df_tribut is not None:
-        map_tribut = dict(zip(df_tribut.iloc[:, 0], df_tribut.iloc[:, 2]))
-        map_gerencial = dict(zip(df_gerencial.iloc[:, 0], df_gerencial.iloc[:, 1]))
+    # Aba ICMS (Somente Saídas com Auditoria)
+    df_icms = df_saidas.copy()
+    if not df_icms.empty and df_tribut is not None:
+        map_t = dict(zip(df_tribut.iloc[:, 0].astype(str), df_tribut.iloc[:, 2].astype(str)))
+        map_g = dict(zip(df_gerencial.iloc[:, 0].astype(str), df_gerencial.iloc[:, 1].astype(str)))
 
-        def analisar_cst(row):
-            status = str(row['AP'])
-            cst_xml = str(row['CST ICMS']).strip()
-            ncm = str(row['NCM']).strip()
+        def auditar(row):
+            status, cst, ncm = str(row['AP']), str(row['CST ICMS']).strip(), str(row['NCM']).strip()
             if "Cancelamento" in status: return "NF cancelada"
-            esperado = map_tribut.get(ncm)
-            if not esperado: return "NCM não encontrado"
-            if cst_xml == "60":
-                if map_gerencial.get(ncm) == "60": return "Correto"
-                return f"Divergente — CST informado: 60 | Esperado: {esperado}"
-            if cst_xml != esperado:
-                return f"Divergente — CST informado: {cst_xml} | Esperado: {esperado}"
-            return "Correto"
+            esp = map_t.get(ncm)
+            if not esp: return "NCM não encontrado"
+            if cst == "60":
+                return "Correto" if map_g.get(ncm) == "60" else f"Divergente — CST informado: 60 | Esperado: {esp}"
+            return "Correto" if cst == esp else f"Divergente — CST informado: {cst} | Esperado: {esp}"
 
-        df_base['Análise CST ICMS'] = df_base.apply(analisar_cst, axis=1)
+        df_icms['Análise CST ICMS'] = df_icms.apply(auditar, axis=1)
 
-    # --- EXIBIÇÃO E DOWNLOAD ---
-    st.success("Tudo pronto! As abas foram geradas com sucesso.")
-    
+    # --- EXPORTAÇÃO ---
+    st.success("Abas geradas com sucesso conforme o padrão aprovado!")
     buffer = io.BytesIO()
     with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
-        if not df_saida.empty: df_saida.to_excel(writer, index=False, sheet_name='Saídas')
-        if not df_entrada.empty: df_entrada.to_excel(writer, index=False, sheet_name='Entradas')
-        df_base.to_excel(writer, index=False, sheet_name='Base_XML')
-        df_base.to_excel(writer, index=False, sheet_name='ICMS')
+        if not df_entradas.empty: df_entradas.to_excel(writer, index=False, sheet_name='Entradas')
+        if not df_saidas.empty: df_saidas.to_excel(writer, index=False, sheet_name='Saídas')
+        df_base_xml.to_excel(writer, index=False, sheet_name='Base_XML')
+        df_icms.to_excel(writer, index=False, sheet_name='ICMS')
 
-    st.download_button(
-        label="📥 Baixar Sentinela Completa (Saídas, Entradas, Base e ICMS)",
-        data=buffer.getvalue(),
-        file_name="Sentinela_Resultado_Final.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    )
+    st.download_button("📥 Baixar Sentinela Completa", buffer.getvalue(), "Sentinela_Auditada.xlsx")
