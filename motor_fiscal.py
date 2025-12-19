@@ -161,20 +161,19 @@ def gerar_excel_final(df_ent, df_sai, file_ger_ent=None, file_ger_sai=None):
         if not f: return pd.DataFrame()
         try:
             f.seek(0)
-            # Detecta separador e força NF como Texto
+            # Lê CSV forçando NF (coluna 0) como Texto e detectando separador automaticamente
             df = pd.read_csv(f, sep=None, engine='python', header=None, dtype={0: str})
-            # Remove cabeçalho se a primeira célula não for só números
             if not str(df.iloc[0, 0]).isdigit(): df = df.iloc[1:]
             df.columns = cols
             return df
-        except: return pd.DataFrame()
+        except: return pd.DataFrame([{"AVISO": "Erro na leitura deste CSV específico"}])
 
     c_sai = ['NF','DATA_EMISSAO','CNPJ','Ufp','VC','AC','CFOP','COD_ITEM','VUNIT','QTDE','VITEM','DESC','FRETE','SEG','OUTRAS','VC_ITEM','CST','Coluna2','Coluna3','BC_ICMS','ALIQ_ICMS','ICMS','BC_ICMSST','ICMSST','IPI','CST_PIS','BC_PIS','PIS','CST_COF','BC_COF','COF']
     c_ent = ['NUM_NF','DATA_EMISSAO','CNPJ','UF','VLR_NF','AC','CFOP','COD_PROD','DESCR','NCM','UNID','VUNIT','QTDE','VPROD','DESC','FRETE','SEG','DESP','VC','CST-ICMS','Coluna2','BC-ICMS','VLR-ICMS','BC-ICMS-ST','ICMS-ST','VLR_IPI','CST_PIS','BC_PIS','VLR_PIS','CST_COF','BC_COF','VLR_COF']
     
     df_ge = load_csv(file_ger_ent, c_ent); df_gs = load_csv(file_ger_sai, c_sai)
 
-    # --- GRAVAÇÃO FINAL ---
+    # --- GRAVAÇÃO DAS ABAS ---
     mem = io.BytesIO()
     with pd.ExcelWriter(mem, engine='xlsxwriter') as wr:
         if not df_ent.empty: df_ent.to_excel(wr, sheet_name='ENTRADAS', index=False)
@@ -184,13 +183,16 @@ def gerar_excel_final(df_ent, df_sai, file_ger_ent=None, file_ger_sai=None):
         if not df_ipi.empty: df_ipi.to_excel(wr, sheet_name='IPI', index=False)
         if not df_difal.empty: df_difal.to_excel(wr, sheet_name='DIFAL', index=False)
         if not df_dest.empty: df_dest.to_excel(wr, sheet_name='ICMS_Destino', index=False)
-        # As gerenciais aparecem se o arquivo existir
-        if not df_ge.empty: df_ge.to_excel(wr, sheet_name='Gerenc. Entradas', index=False)
-        if not df_gs.empty: df_gs.to_excel(wr, sheet_name='Gerenc. Saídas', index=False)
+        
+        # Agora as abas gerenciais são criadas se o arquivo for enviado
+        if file_ger_ent: df_ge.to_excel(wr, sheet_name='Gerenc. Entradas', index=False)
+        if file_ger_sai: df_gs.to_excel(wr, sheet_name='Gerenc. Saídas', index=False)
 
-        # Forçar formato Texto na coluna A
-        wb = wr.book; f_t = wb.add_format({'num_format': '@'})
+        # Configuração estética mínima (Coluna A como Texto)
+        workbook = wr.book
+        fmt_txt = workbook.add_format({'num_format': '@'})
         for s in ['Gerenc. Entradas', 'Gerenc. Saídas']:
-            if s in wr.sheets: wr.sheets[s].set_column('A:A', 20, f_t)
-            
+            if s in wr.sheets:
+                wr.sheets[s].set_column('A:A', 20, fmt_txt)
+                
     return mem.getvalue()
