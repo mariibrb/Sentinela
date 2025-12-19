@@ -147,27 +147,30 @@ def gerar_excel_final(df_ent, df_sai, file_ger_ent=None, file_ger_sai=None):
     df_dest.columns = ['ESTADO', 'ST', 'DIFAL', 'FCP', 'FCP-ST']
     for col in ['ST', 'DIFAL', 'FCP', 'FCP-ST']: df_dest[col] = df_dest[col].apply(format_brl)
 
-    # --- ABAS GERENCIAMENTO (FORÇANDO NF COMO TEXTO) ---
-    def read_manager(f, cols):
+    # --- ABAS GERENCIAMENTO (RESTORED ORIGINAL LOGIC) ---
+    def read_clean_csv(f, cols):
         if not f: return pd.DataFrame([{"AVISO": "Não enviado"}])
         try:
             f.seek(0)
-            raw = f.read(); encodings = ['utf-8-sig', 'latin1', 'iso-8859-1']
-            for enc in encodings:
+            raw = f.read()
+            for enc in ['utf-8-sig', 'latin1', 'iso-8859-1']:
                 try:
                     txt = raw.decode(enc)
                     sep = ';' if txt.count(';') > txt.count(',') else ','
-                    # dtype=str força a leitura da coluna 0 (NF) como texto para evitar conversão em data
-                    return pd.read_csv(io.StringIO(txt), sep=sep, header=0, names=cols, engine='python', dtype={cols[0]: str})
+                    # Força NF (primeira coluna) como string para evitar conversão para data
+                    df = pd.read_csv(io.StringIO(txt), sep=sep, header=0, dtype={0: str, cols[0]: str}, engine='python')
+                    # Garante que as colunas solicitadas sejam aplicadas se houver divergência
+                    if len(df.columns) == len(cols): df.columns = cols
+                    return df
                 except: continue
-            return pd.read_csv(io.BytesIO(raw), sep=None, engine='python', names=cols, header=0, dtype={cols[0]: str})
-        except: return pd.DataFrame([{"ERRO": "Falha na leitura do CSV"}])
+            return pd.read_csv(io.BytesIO(raw), sep=None, engine='python', dtype={0: str})
+        except: return pd.DataFrame([{"ERRO": "Falha na leitura"}])
 
     cols_sai = ['NF','DATA_EMISSAO','CNPJ','Ufp','VC','AC','CFOP','COD_ITEM','VUNIT','QTDE','VITEM','DESC','FRETE','SEG','OUTRAS','VC_ITEM','CST','Coluna2','Coluna3','BC_ICMS','ALIQ_ICMS','ICMS','BC_ICMSST','ICMSST','IPI','CST_PIS','BC_PIS','PIS','CST_COF','BC_COF','COF']
     cols_ent = ['NUM_NF','DATA_EMISSAO','CNPJ','UF','VLR_NF','AC','CFOP','COD_PROD','DESCR','NCM','UNID','VUNIT','QTDE','VPROD','DESC','FRETE','SEG','DESP','VC','CST-ICMS','Coluna2','BC-ICMS','VLR-ICMS','BC-ICMS-ST','ICMS-ST','VLR_IPI','CST_PIS','BC_PIS','VLR_PIS','CST_COF','BC_COF','VLR_COF']
 
-    df_ge = read_manager(file_ger_ent, cols_ent)
-    df_gs = read_manager(file_ger_sai, cols_sai)
+    df_ge = read_clean_csv(file_ger_ent, cols_ent)
+    df_gs = read_clean_csv(file_ger_sai, cols_sai)
 
     mem = io.BytesIO()
     with pd.ExcelWriter(mem, engine='xlsxwriter') as wr:
