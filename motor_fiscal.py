@@ -108,7 +108,7 @@ def gerar_excel_final(df_ent, df_sai, file_ger_ent=None, file_ger_sai=None):
         df_icms_audit[['ST na Entrada', 'Diagnóstico', 'ICMS XML', 'ICMS Esperado', 'Ação', 'Complemento']] = df_icms_audit.apply(audit_icms, axis=1)
 
     # --- ABA PIS/COFINS ---
-    df_pc_audit = df_sai.copy()
+    df_pc = df_sai.copy()
     def audit_pc(row):
         ncm = str(row['NCM']).zfill(8); info = base_pc[base_pc['NCM_KEY'] == ncm] if not base_pc.empty else pd.DataFrame()
         if info.empty: return pd.Series(["NCM não mapeado", f"P/C: {row['CST-PIS']}/{row['CST-COF']}", "-", "Cadastrar NCM"])
@@ -118,11 +118,11 @@ def gerar_excel_final(df_ent, df_sai, file_ger_ent=None, file_ger_sai=None):
         if str(row['CST-PIS']) != cp_e: diag.append("PIS: Divergente"); acao.append(f"Cc-e (CST PIS {cp_e})")
         if str(row['CST-COF']) != cc_e: diag.append("COF: Divergente"); acao.append(f"Cc-e (CST COF {cc_e})")
         return pd.Series(["; ".join(diag) if diag else "✅ Correto", f"P/C: {row['CST-PIS']}/{row['CST-COF']}", f"P/C: {cp_e}/{cc_e}", " + ".join(acao) if acao else "✅ Correto"])
-    if not df_pc_audit.empty:
-        df_pc_audit[['Diagnóstico', 'CST XML (P/C)', 'CST Esperado (P/C)', 'Ação']] = df_pc_audit.apply(audit_pc, axis=1)
+    if not df_pc.empty:
+        df_pc[['Diagnóstico', 'CST XML (P/C)', 'CST Esperado (P/C)', 'Ação']] = df_pc.apply(audit_pc, axis=1)
 
     # --- ABA IPI ---
-    df_ipi_audit = df_sai.copy()
+    df_ipi = df_sai.copy()
     def audit_ipi(row):
         ncm = str(row['NCM']).zfill(8); info = base_pc[base_pc['NCM_KEY'] == ncm] if not base_pc.empty else pd.DataFrame()
         if info.empty: return pd.Series(["NCM não mapeado", row['CST-IPI'], "-", format_brl(row['VAL-IPI']), "R$ 0,00", "Cadastrar NCM", "R$ 0,00"])
@@ -132,11 +132,11 @@ def gerar_excel_final(df_ent, df_sai, file_ger_ent=None, file_ger_sai=None):
         if str(row['CST-IPI']) != ci_e: diag.append("CST: Divergente"); acao.append(f"Cc-e (CST IPI {ci_e})")
         if abs(row['VAL-IPI'] - v_e) > 0.01: diag.append("Valor: Divergente"); acao.append("Complementar" if row['VAL-IPI'] < v_e else "Estornar")
         return pd.Series(["; ".join(diag) if diag else "✅ Correto", row['CST-IPI'], ci_e, format_brl(row['VAL-IPI']), format_brl(v_e), " + ".join(acao) if acao else "✅ Correto", format_brl(max(0, v_e-row['VAL-IPI']))])
-    if not df_ipi_audit.empty:
-        df_ipi_audit[['Diagnóstico', 'CST XML', 'CST Base', 'IPI XML', 'IPI Esperado', 'Ação', 'Complemento']] = df_ipi_audit.apply(audit_ipi, axis=1)
+    if not df_ipi.empty:
+        df_ipi[['Diagnóstico', 'CST XML', 'CST Base', 'IPI XML', 'IPI Esperado', 'Ação', 'Complemento']] = df_ipi.apply(audit_ipi, axis=1)
 
     # --- ABA DIFAL ---
-    df_difal_audit = df_sai.copy()
+    df_difal = df_sai.copy()
     def audit_difal(row):
         is_i = row['UF_EMIT'] != row['UF_DEST']; cfop = str(row['CFOP']); diag, acao = [], []
         if is_i:
@@ -146,8 +146,8 @@ def gerar_excel_final(df_ent, df_sai, file_ger_ent=None, file_ger_sai=None):
             else: diag.append("✅ Correto"); acao.append("✅ Correto")
         else: diag.append("✅ Correto"); acao.append("✅ Correto")
         return pd.Series(["; ".join(diag), format_brl(row['VAL-DIFAL']), "; ".join(acao)])
-    if not df_difal_audit.empty:
-        df_difal_audit[['Diagnóstico', 'DIFAL XML', 'Ação']] = df_difal_audit.apply(audit_difal, axis=1)
+    if not df_difal.empty:
+        df_difal[['Diagnóstico', 'DIFAL XML', 'Ação']] = df_difal.apply(audit_difal, axis=1)
 
     # --- ABA ICMS_DESTINO ---
     if not df_sai.empty:
@@ -156,49 +156,53 @@ def gerar_excel_final(df_ent, df_sai, file_ger_ent=None, file_ger_sai=None):
         for col in ['ST', 'DIFAL', 'FCP', 'FCP-ST']: df_dest[col] = df_dest[col].apply(format_brl)
     else: df_dest = pd.DataFrame()
 
-    # --- LEITURA DOS GERENCIAIS COM CONVERSOR DE TEXTO ---
-    def safe_load_csv(f, cols):
+    # --- BLOCO GERENCIAIS (BLINDAGEM CONTRA LENGTH MISMATCH) ---
+    def load_gerencial_flexible(f, target_cols):
         if not f: return pd.DataFrame()
         try:
             f.seek(0)
-            raw_content = f.read().decode('utf-8-sig', errors='replace')
-            # Detecta separador
-            sep = ';' if raw_content.count(';') > raw_content.count(',') else ','
-            # Converte a primeira coluna (NF) em string pura para evitar formato de data
-            df = pd.read_csv(io.StringIO(raw_content), sep=sep, header=None, engine='python', converters={0: str})
-            # Remove cabeçalho se não for numérico na primeira célula
+            raw = f.read().decode('utf-8-sig', errors='replace')
+            sep = ';' if raw.count(';') > raw.count(',') else ','
+            df = pd.read_csv(io.StringIO(raw), sep=sep, header=None, engine='python', dtype={0: str})
+            
             if df.shape[0] > 0 and not str(df.iloc[0, 0]).strip().isdigit():
                 df = df.iloc[1:]
+
+            # Resolve o erro de "Length mismatch": pega apenas o número de colunas necessário
+            num_cols_df = df.shape[1]
+            num_cols_target = len(target_cols)
             
-            df.columns = cols
+            if num_cols_df > num_cols_target:
+                df = df.iloc[:, :num_cols_target] # Corta colunas extras
+            elif num_cols_df < num_cols_target:
+                for i in range(num_cols_target - num_cols_df):
+                    df[f'Vazia_{i}'] = "" # Adiciona colunas se faltarem
+            
+            df.columns = target_cols
             return df
         except Exception as e:
-            return pd.DataFrame([{"ERRO": f"Erro técnico: {str(e)}"}])
+            return pd.DataFrame([{"ERRO": f"Falha na leitura: {str(e)}"}])
 
     c_sai = ['NF','DATA_EMISSAO','CNPJ','Ufp','VC','AC','CFOP','COD_ITEM','VUNIT','QTDE','VITEM','DESC','FRETE','SEG','OUTRAS','VC_ITEM','CST','Coluna2','Coluna3','BC_ICMS','ALIQ_ICMS','ICMS','BC_ICMSST','ICMSST','IPI','CST_PIS','BC_PIS','PIS','CST_COF','BC_COF','COF']
     c_ent = ['NUM_NF','DATA_EMISSAO','CNPJ','UF','VLR_NF','AC','CFOP','COD_PROD','DESCR','NCM','UNID','VUNIT','QTDE','VPROD','DESC','FRETE','SEG','DESP','VC','CST-ICMS','Coluna2','BC-ICMS','VLR-ICMS','BC-ICMS-ST','ICMS-ST','VLR_IPI','CST_PIS','BC_PIS','VLR_PIS','CST_COF','BC_COF','VLR_COF']
     
-    df_ge = safe_load_csv(file_ger_ent, c_ent)
-    df_gs = safe_load_csv(file_ger_sai, c_sai)
+    df_ge = load_gerencial_flexible(file_ger_ent, c_ent)
+    df_gs = load_gerencial_flexible(file_ger_sai, c_sai)
 
     mem = io.BytesIO()
     with pd.ExcelWriter(mem, engine='xlsxwriter') as wr:
         if not df_ent.empty: df_ent.to_excel(wr, sheet_name='ENTRADAS', index=False)
         if not df_sai.empty: df_sai.to_excel(wr, sheet_name='SAIDAS', index=False)
         if not df_icms_audit.empty: df_icms_audit.to_excel(wr, sheet_name='ICMS', index=False)
-        if not df_pc_audit.empty: df_pc_audit.to_excel(wr, sheet_name='PIS_COFINS', index=False)
-        if not df_ipi_audit.empty: df_ipi_audit.to_excel(wr, sheet_name='IPI', index=False)
-        if not df_difal_audit.empty: df_difal_audit.to_excel(wr, sheet_name='DIFAL', index=False)
+        if not df_pc.empty: df_pc.to_excel(wr, sheet_name='PIS_COFINS', index=False)
+        if not df_ipi.empty: df_ipi.to_excel(wr, sheet_name='IPI', index=False)
+        if not df_difal.empty: df_difal.to_excel(wr, sheet_name='DIFAL', index=False)
         if not df_dest.empty: df_dest.to_excel(wr, sheet_name='ICMS_Destino', index=False)
-        
-        # Grava as abas gerenciais
         if not df_ge.empty: df_ge.to_excel(wr, sheet_name='Gerenc. Entradas', index=False)
         if not df_gs.empty: df_gs.to_excel(wr, sheet_name='Gerenc. Saídas', index=False)
 
-        # Travamento final de formato de texto na Coluna A do Excel gerado
         wb = wr.book; f_txt = wb.add_format({'num_format': '@'})
         for s in ['Gerenc. Entradas', 'Gerenc. Saídas']:
-            if s in wr.sheets:
-                wr.sheets[s].set_column('A:A', 20, f_txt)
+            if s in wr.sheets: wr.sheets[s].set_column('A:A', 20, f_txt)
                 
     return mem.getvalue()
