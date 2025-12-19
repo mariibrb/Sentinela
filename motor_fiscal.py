@@ -29,15 +29,13 @@ def extrair_dados_xml(files, fluxo, df_autenticidade=None):
             chave_acesso = inf_nfe.attrib.get('Id', '')[3:] if inf_nfe is not None else ""
             num_nf = buscar('nNF')
             data_emi = buscar('dhEmi')
-            total_nf = root.find('.//total/ICMSTot')
-            vlr_nf = total_nf.find('vNF').text if total_nf is not None and total_nf.find('vNF') is not None else "0.0"
             
-            bloco_parceiro = 'emit' if fluxo == "Entrada" else 'dest'
-            parceiro = root.find(f'.//{bloco_parceiro}')
-            cnpj = buscar('CNPJ', parceiro) if parceiro is not None else ""
-            uf = buscar('UF', parceiro) if parceiro is not None else ""
-
-            for det in root.findall('.//det'):
+            # Dados do Emitente e Destinatário para lógica Interestadual
+            emit_uf = buscar('UF', root.find('.//emit'))
+            dest_uf = buscar('UF', root.find('.//dest'))
+            
+            itens = root.findall('.//det')
+            for det in itens:
                 prod = det.find('prod')
                 imp = det.find('imposto')
                 n_item = det.attrib.get('nItem', '0')
@@ -45,21 +43,16 @@ def extrair_dados_xml(files, fluxo, df_autenticidade=None):
                 linha = {
                     "CHAVE_ACESSO": chave_acesso, "NUM_NF": num_nf,
                     "DATA_EMISSAO": pd.to_datetime(data_emi).replace(tzinfo=None) if data_emi else None,
-                    "CNPJ": cnpj, "UF": uf, "VLR_NF": float(vlr_nf) if vlr_nf else 0.0, 
-                    "AC": int(n_item), "CFOP": buscar('CFOP', prod), "COD_PROD": buscar('cProd', prod),
-                    "DESCR": buscar('xProd', prod), "NCM": buscar('NCM', prod), "UNID": buscar('uCom', prod),
-                    "VUNIT": float(buscar('vUnCom', prod)) if buscar('vUnCom', prod) else 0.0,
-                    "QTDE": float(buscar('qCom', prod)) if buscar('qCom', prod) else 0.0,
+                    "UF_EMIT": emit_uf, "UF_DEST": dest_uf, "AC": int(n_item),
+                    "CFOP": buscar('CFOP', prod), "NCM": buscar('NCM', prod),
+                    "COD_PROD": buscar('cProd', prod), "DESCR": buscar('xProd', prod),
                     "VPROD": float(buscar('vProd', prod)) if buscar('vProd', prod) else 0.0,
-                    "DESC": float(buscar('vDesc', prod)) if buscar('vDesc', prod) else 0.0,
                     "FRETE": float(buscar('vFrete', prod)) if buscar('vFrete', prod) else 0.0,
                     "SEG": float(buscar('vSeg', prod)) if buscar('vSeg', prod) else 0.0,
                     "DESP": float(buscar('vOutro', prod)) if buscar('vOutro', prod) else 0.0,
-                    "VC": 0.0, "CST-ICMS": "", "BC-ICMS": 0.0, "VLR-ICMS": 0.0, 
-                    "BC-ICMS-ST": 0.0, "ICMS-ST": 0.0, "VLR_IPI": 0.0, 
-                    "CST_PIS": "", "BC_PIS": 0.0, "VLR_PIS": 0.0, 
-                    "CST_COF": "", "BC_COF": 0.0, "VLR_COF": 0.0,
-                    "FCP": 0.0, "ICMS UF Dest": 0.0, "STATUS": "Não Encontrado"
+                    "DESC": float(buscar('vDesc', prod)) if buscar('vDesc', prod) else 0.0,
+                    "CST-ICMS": "", "BC-ICMS": 0.0, "VLR-ICMS": 0.0, "ALQ-ICMS": 0.0,
+                    "BC-ICMS-ST": 0.0, "ICMS-ST": 0.0, "pRedBC": 0.0, "STATUS": ""
                 }
 
                 if imp is not None:
@@ -67,99 +60,99 @@ def extrair_dados_xml(files, fluxo, df_autenticidade=None):
                     if icms_data is not None:
                         for nodo in icms_data:
                             cst = nodo.find('CST') if nodo.find('CST') is not None else nodo.find('CSOSN')
-                            if cst is not None: linha["CST-ICMS"] = cst.text
+                            if cst is not None: linha["CST-ICMS"] = cst.text.zfill(2)
                             if nodo.find('vBC') is not None: linha["BC-ICMS"] = float(nodo.find('vBC').text)
                             if nodo.find('vICMS') is not None: linha["VLR-ICMS"] = float(nodo.find('vICMS').text)
+                            if nodo.find('pICMS') is not None: linha["ALQ-ICMS"] = float(nodo.find('pICMS').text)
+                            if nodo.find('pRedBC') is not None: linha["pRedBC"] = float(nodo.find('pRedBC').text)
                             if nodo.find('vBCST') is not None: linha["BC-ICMS-ST"] = float(nodo.find('vBCST').text)
                             if nodo.find('vICMSST') is not None: linha["ICMS-ST"] = float(nodo.find('vICMSST').text)
 
-                linha["VC"] = linha["VPROD"] + linha["ICMS-ST"] + linha["VLR_IPI"] + linha["DESP"] - linha["DESC"]
                 dados_lista.append(linha)
             
-            container_status.text(f"📊 Processando {i+1} de {total_arquivos}...")
             progresso.progress((i + 1) / total_arquivos)
         except: continue
     
     df_res = pd.DataFrame(dados_lista)
-    
     if not df_res.empty and df_autenticidade is not None:
         df_res['CHAVE_ACESSO'] = df_res['CHAVE_ACESSO'].astype(str).str.strip()
-        mapeamento = dict(zip(df_autenticidade.iloc[:, 0].astype(str).str.strip(), df_autenticidade.iloc[:, 5]))
-        df_res['STATUS'] = df_res['CHAVE_ACESSO'].map(mapeamento).fillna("Chave não encontrada")
+        map_auth = dict(zip(df_autenticidade.iloc[:, 0].astype(str).str.strip(), df_autenticidade.iloc[:, 5]))
+        df_res['STATUS'] = df_res['CHAVE_ACESSO'].map(map_auth).fillna("Não encontrada")
 
-    if not df_res.empty:
-        df_res.drop_duplicates(subset=['CHAVE_ACESSO', 'AC'], keep='first', inplace=True)
-
-    container_status.empty()
-    progresso.empty()
     return df_res
 
 def gerar_excel_final(df_ent, df_sai):
-    ncms_com_st = []
-    if not df_ent.empty:
-        ncms_com_st = df_ent[df_ent['ICMS-ST'] > 0]['NCM'].unique().tolist()
+    # Carregando as bases de apoio para o PROCV
+    try:
+        base_tribut = pd.read_excel(".streamlit/Base_ICMS.xlsx")
+        base_tribut['NCM'] = base_tribut.iloc[:, 0].astype(str).str.strip() # Col A
+    except:
+        base_tribut = pd.DataFrame(columns=['NCM'])
 
     df_icms_audit = df_sai.copy() if not df_sai.empty else pd.DataFrame()
 
     if not df_icms_audit.empty:
-        def format_brl(val): return f"R$ {val:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+        # Preparação dos dados para a lógica do PROCV
+        ncms_entrada_60 = []
+        if not df_ent.empty:
+            ncms_entrada_60 = df_ent[df_ent['CST-ICMS'] == "60"]['NCM'].unique().tolist()
 
-        def auditoria_inteligente(row):
-            diag = "✅ Tudo Certo"
-            acao = "Nota emitida corretamente. Nenhuma ação necessária."
-            cce = "Não se aplica"
+        def auditoria_expert(row):
+            status_nota = str(row['STATUS'])
+            if "Cancelamento" in status_nota or "Cancelada" in status_nota:
+                return pd.Series(["NF Cancelada", "R$ 0,00", "R$ 0,00", "Não se aplica", "NF Cancelada"])
+
+            # Busca no PROCV (Base Tributária)
+            info_ncm = base_tribut[base_tribut['NCM'] == str(row['NCM']).strip()]
+            cst_esperado = str(info_ncm.iloc[0, 2]).zfill(2) if not info_ncm.empty else "NCM não encontrado"
+            alq_esperada = float(info_ncm.iloc[0, 3]) if not info_ncm.empty else 0.0
+
+            mensagens = []
+            
+            # --- LÓGICA 1: VALIDAÇÃO DE CST ---
+            cst_atual = str(row['CST-ICMS']).strip()
+            if cst_atual == "60":
+                if row['NCM'] not in ncms_entrada_60:
+                    mensagens.append(f"Divergente — CST informado: 60 | Esperado: {cst_esperado}")
+            elif cst_atual != cst_esperado and cst_esperado != "NCM não encontrado":
+                mensagens.append(f"Divergente — CST informado: {cst_atual} | Esperado: {cst_esperado}")
+
+            # --- LÓGICA 2: VALIDAÇÃO DE BASE E REDUÇÃO ---
+            if cst_atual == "00" and abs(row['BC-ICMS'] - row['VPROD']) > 0.02:
+                mensagens.append("Base ICMS incorreta — valor diferente do produto")
+            
+            if cst_atual == "20":
+                if row['pRedBC'] == 0: mensagens.append("CST 020 sem redução da base")
+                calc_red = row['VPROD'] * (1 - row['pRedBC']/100)
+                if abs(row['BC-ICMS'] - calc_red) > 0.02: mensagens.append("Base ICMS incorreta após redução")
+
+            # --- LÓGICA 3: ALÍQUOTA (INTERNA E INTERESTADUAL) ---
+            if row['UF_EMIT'] == row['UF_DEST']:
+                if row['ALQ-ICMS'] != alq_esperada and cst_esperado != "NCM não encontrado":
+                    mensagens.append(f"Alíquota Errada - Destacado: {row['ALQ-ICMS']}% | Esperado: {alq_esperada}%")
+            
+            # --- LÓGICA 4: CÁLCULO DE COMPLEMENTO ---
             complemento = 0.0
+            if row['ALQ-ICMS'] < alq_esperada and row['BC-ICMS'] > 0:
+                complemento = (alq_esperada - row['ALQ-ICMS']) * row['BC-ICMS'] / 100
+
+            diagnostico = "; ".join(mensagens) if mensagens else "Correto"
+            acao = "Cc-e permitida para correção cadastral" if "Alíquota" in diagnostico else "Requer NF Complementar ou Estorno"
+            if diagnostico == "Correto": acao = "Manter conforme XML"
+
+            def fmt(v): return f"R$ {v:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
             
-            aliq_esp = (row['VLR-ICMS'] / row['BC-ICMS'] * 100) if row['BC-ICMS'] > 0 else 0.0
-            base_esperada = row['VPROD'] + row['FRETE'] + row['SEG'] + row['DESP'] - row['DESC']
-            possui_acessorios = (row['FRETE'] + row['SEG'] + row['DESP']) > 0
-            
-            # 1. Bitributação
-            if row['NCM'] in ncms_com_st and row['VLR-ICMS'] > 0:
-                diag = "❌ ERRO: Imposto cobrado em duplicidade"
-                acao = f"Como o NCM {row['NCM']} já pagou ST na entrada, você deve zerar o ICMS desta nota e mudar o CST para 060."
-                cce = "Não permitido para valores. Requer Nota Fiscal de Estorno/Ajuste."
-                aliq_esp = 0.0
+            return pd.Series([diagnostico, fmt(row['VLR-ICMS']), fmt(row['BC-ICMS'] * alq_esperada / 100), acao, fmt(complemento)])
 
-            # 2. Isenção com Destaque
-            elif row['CST-ICMS'] in ['40', '41', '50'] and row['VLR-ICMS'] > 0:
-                diag = "❌ ERRO: Nota Isenta com imposto destacado"
-                acao = "A nota está marcada como isenta, mas você cobrou imposto. É necessário estornar esse valor."
-                cce = "Não permitido para valores. Corrigir cadastro de tributação."
-                aliq_esp = 0.0
-
-            # 3. Esquecimento de Frete/Despesas (SOMENTE SE FRETE > 0)
-            elif possui_acessorios and row['BC-ICMS'] > 0 and (base_esperada - row['BC-ICMS']) > 0.10:
-                vlr_faltante = base_esperada - row['BC-ICMS']
-                complemento = vlr_faltante * (aliq_esp / 100)
-                diag = "⚠️ ATENÇÃO: Imposto calculado a menor"
-                acao = f"O valor de Frete/Despesas (R$ {row['FRETE'] + row['DESP'] + row['SEG']:,.2f}) não foi somado na base de cálculo."
-                cce = "Para corrigir o valor do imposto, é necessário emitir uma NF-e Complementar."
-
-            # 4. Alíquota Fora do Padrão
-            elif row['BC-ICMS'] > 0 and round(aliq_esp, 0) not in [0, 4, 7, 12, 17, 18, 19, 20]:
-                diag = "⚠️ ALERTA: Alíquota fora do padrão"
-                acao = f"A alíquota de {aliq_esp:.2f}% não é comum. Verifique se a tributação para a UF {row['UF']} está correta."
-                cce = "Cc-e permitida apenas se não houver alteração no valor do imposto."
-
-            return pd.Series([
-                f"{aliq_esp:.2f}%", 
-                format_brl(row['VLR-ICMS']), 
-                diag, 
-                acao,
-                cce,
-                format_brl(complemento)
-            ])
-
-        df_icms_audit[['Alíquota Esperada', 'Valor de ICMS no XML', 'Diagnóstico Detalhado', 'Como Corrigir?', 'Cc-e', 'Complemento de ICMS']] = df_icms_audit.apply(auditoria_inteligente, axis=1)
+        df_icms_audit[['Diagnóstico Detalhado', 'ICMS Destacado', 'ICMS Esperado', 'Como Corrigir?', 'Complemento de ICMS']] = df_icms_audit.apply(auditoria_expert, axis=1)
+        # Inserção da coluna Alíquota Esperada conforme pedido
+        df_icms_audit['Alíquota Esperada'] = df_icms_audit.apply(lambda r: f"{(base_tribut[base_tribut['NCM']==str(r['NCM']).strip()].iloc[0,3] if not base_tribut[base_tribut['NCM']==str(r['NCM']).strip()].empty else 0.0):.2f}%", axis=1)
 
     mem = io.BytesIO()
     with pd.ExcelWriter(mem, engine='xlsxwriter') as wr:
         if not df_ent.empty: df_ent.to_excel(wr, sheet_name='ENTRADAS', index=False)
         if not df_sai.empty:
             df_sai.to_excel(wr, sheet_name='SAIDAS', index=False)
-            df_icms_audit.to_excel(wr, sheet_name='ICMS', index=False) 
-            df_sai.to_excel(wr, sheet_name='IPI', index=False)
-            df_sai.to_excel(wr, sheet_name='PIS_COFINS', index=False)
-            df_sai.to_excel(wr, sheet_name='DIFAL', index=False)
+            df_icms_audit.to_excel(wr, sheet_name='ICMS', index=False)
+            for aba in ['IPI', 'PIS_COFINS', 'DIFAL']: df_sai.to_excel(wr, sheet_name=aba, index=False)
     return mem.getvalue()
