@@ -138,18 +138,18 @@ def gerar_excel_final(df_ent, df_sai):
     # --- ABAS DE TRIBUTOS FEDERAIS E DIFAL ---
     # PIS e COFINS
     df_pis_cofins = df_sai.copy()
-    if not df_pis_cofins.empty and "AVISO" not in df_pis_cofins:
+    if not df_pis_cofins.empty and "AVISO" not in df_pis_cofins.columns:
         df_pis_cofins['Análise PIS'] = np.where(df_pis_cofins['VAL-PIS'] > 0, "✅ Destacado", "ℹ️ Sem destaque")
         df_pis_cofins['Análise COFINS'] = np.where(df_pis_cofins['VAL-COF'] > 0, "✅ Destacado", "ℹ️ Sem destaque")
 
     # IPI
     df_ipi = df_sai.copy()
-    if not df_ipi.empty and "AVISO" not in df_ipi:
+    if not df_ipi.empty and "AVISO" not in df_ipi.columns:
         df_ipi['Análise IPI'] = "" # Coluna vazia conforme solicitado
 
     # DIFAL
     df_difal = df_sai.copy()
-    if not df_difal.empty and "AVISO" not in df_difal:
+    if not df_difal.empty and "AVISO" not in df_difal.columns:
         df_difal['Análise DIFAL'] = np.where((df_difal['UF_EMIT'] != df_difal['UF_DEST']) & (df_difal['VAL-DIFAL'] == 0), "❌ DIFAL não localizado", "✅ OK ou Interna")
 
     mem = io.BytesIO()
@@ -158,6 +158,6 @@ def gerar_excel_final(df_ent, df_sai):
         df_sai.to_excel(wr, sheet_name='SAIDAS', index=False)
         df_icms_audit.to_excel(wr, sheet_name='ICMS', index=False)
         df_ipi.to_excel(wr, sheet_name='IPI', index=False)
-        df_pis_cofins.to_excel(writer, sheet_name='PIS_COFINS', index=False)
+        df_pis_cofins.to_excel(wr, sheet_name='PIS_COFINS', index=False)
         df_difal.to_excel(wr, sheet_name='DIFAL', index=False)
     return mem.getvalue()
