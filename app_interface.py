@@ -72,14 +72,12 @@ with col_ent:
     st.markdown("### 📥 1. Entradas")
     xml_ent = st.file_uploader("📂 XMLs de Entrada", type='xml', accept_multiple_files=True, key="ue")
     aut_ent = st.file_uploader("🔍 Autenticidade Entrada", type=['xlsx'], key="ae")
-    # Alterado para aceitar CSV
     ger_ent = st.file_uploader("📊 Gerenc. Entradas (CSV)", type=['csv'], key="ge")
 
 with col_sai:
     st.markdown("### 📤 2. Saídas")
     xml_sai = st.file_uploader("📂 XMLs de Saída", type='xml', accept_multiple_files=True, key="us")
     aut_sai = st.file_uploader("🔍 Autenticidade Saída", type=['xlsx'], key="as")
-    # Alterado para aceitar CSV
     ger_sai = st.file_uploader("📊 Gerenc. Saídas (CSV)", type=['csv'], key="gs")
 
 # --- EXECUÇÃO ---
@@ -88,23 +86,28 @@ if st.button("🚀 EXECUTAR AUDITORIA", type="primary", use_container_width=True
     if not xml_ent and not xml_sai:
         st.error("Por favor, carregue os arquivos XML.")
     else:
-        with st.spinner("O Sentinela está processando e cruzando o Status... 🧡"):
-            df_autent_data = None
-            arq_aut = aut_sai if aut_sai else aut_ent
-            if arq_aut:
-                df_autent_data = pd.read_excel(arq_aut)
+        try:
+            with st.spinner("O Sentinela está processando... 🧡"):
+                df_autent_data = None
+                arq_aut = aut_sai if aut_sai else aut_ent
+                if arq_aut:
+                    df_autent_data = pd.read_excel(arq_aut)
 
-            df_e = extrair_dados_xml(xml_ent, "Entrada", df_autenticidade=df_autent_data)
-            df_s = extrair_dados_xml(xml_sai, "Saída", df_autenticidade=df_autent_data)
-            
-            # Geração do relatório final
-            excel_binario = gerar_excel_final(df_e, df_s, file_ger_ent=ger_ent, file_ger_sai=ger_sai)
-            
-            st.success("Análise concluída! 🧡")
-            st.download_button(
-                label="💾 BAIXAR RELATÓRIO",
-                data=excel_binario,
-                file_name="Auditoria_Sentinela_Completa.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                use_container_width=True
-            )
+                df_e = extrair_dados_xml(xml_ent, "Entrada", df_autenticidade=df_autent_data)
+                df_s = extrair_dados_xml(xml_sai, "Saída", df_autenticidade=df_autent_data)
+                
+                excel_binario = gerar_excel_final(df_e, df_s, file_ger_ent=ger_ent, file_ger_sai=ger_sai)
+                
+                if excel_binario:
+                    st.success("Análise concluída! 🧡")
+                    st.download_button(
+                        label="💾 BAIXAR RELATÓRIO",
+                        data=excel_binario,
+                        file_name="Auditoria_Sentinela_Completa.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        use_container_width=True
+                    )
+                else:
+                    st.error("Erro: O relatório foi gerado vazio. Verifique os arquivos enviados.")
+        except Exception as e:
+            st.error(f"Erro crítico no processamento: {e}")
