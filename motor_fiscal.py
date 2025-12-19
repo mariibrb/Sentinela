@@ -6,7 +6,7 @@ import streamlit as st
 
 def extrair_dados_xml(files, fluxo):
     """
-    Leitura binária ultra-resistente com bloqueio de duplicados por Chave de Acesso.
+    Leitura de XMLs com bloqueio de duplicados e apenas a coluna STATUS ao final.
     """
     dados_lista = []
     if not files: 
@@ -22,7 +22,7 @@ def extrair_dados_xml(files, fluxo):
             conteudo_bruto = f.read()
             texto_xml = conteudo_bruto.decode('utf-8', errors='replace')
             
-            # Limpeza do XML para evitar erros de leitura
+            # Limpeza do XML
             texto_xml = re.sub(r'<\?xml[^?]*\?>', '', texto_xml)
             texto_xml = re.sub(r'\sxmlns(:\w+)?="[^"]+"', '', texto_xml)
             
@@ -32,7 +32,6 @@ def extrair_dados_xml(files, fluxo):
                 alvo = raiz.find(f'.//{caminho}')
                 return alvo.text if alvo is not None and alvo.text is not None else ""
 
-            # Extração da Chave de Acesso (Bloqueio de duplicados)
             inf_nfe = root.find('.//infNFe')
             chave_acesso = inf_nfe.attrib.get('Id', '')[3:] if inf_nfe is not None else ""
 
@@ -52,6 +51,7 @@ def extrair_dados_xml(files, fluxo):
                 imp = det.find('imposto')
                 n_item = det.attrib.get('nItem', '0')
                 
+                # STATUS é a única coluna de controle mantida
                 linha = {
                     "CHAVE_ACESSO": chave_acesso,
                     "NUM_NF": num_nf,
@@ -75,8 +75,8 @@ def extrair_dados_xml(files, fluxo):
                     "BC-ICMS-ST": 0.0, "ICMS-ST": 0.0, "VLR_IPI": 0.0, 
                     "CST_PIS": "", "BC_PIS": 0.0, "VLR_PIS": 0.0, 
                     "CST_COF": "", "BC_COF": 0.0, "VLR_COF": 0.0,
-                    "FCP": 0.0, "ICMS UF Dest": 0.0, "STATUS": "", 
-                    "Análise CST ICMS": "", "CST x BC": "", "Analise Aliq ICMS": ""
+                    "FCP": 0.0, "ICMS UF Dest": 0.0,
+                    "STATUS": "" 
                 }
 
                 if imp is not None:
@@ -87,6 +87,8 @@ def extrair_dados_xml(files, fluxo):
                             if cst is not None: linha["CST-ICMS"] = cst.text
                             if nodo.find('vBC') is not None: linha["BC-ICMS"] = float(nodo.find('vBC').text)
                             if nodo.find('vICMS') is not None: linha["VLR-ICMS"] = float(nodo.find('vICMS').text)
+                            if nodo.find('vBCST') is not None: linha["BC-ICMS-ST"] = float(nodo.find('vBCST').text)
+                            if nodo.find('vICMSST') is not None: linha["ICMS-ST"] = float(nodo.find('vICMSST').text)
                     
                     vipi = imp.find('.//vIPI')
                     if vipi is not None: linha["VLR_IPI"] = float(vipi.text)
@@ -105,7 +107,6 @@ def extrair_dados_xml(files, fluxo):
     
     df_resultado = pd.DataFrame(dados_lista)
     
-    # Bloqueio de duplicados por Chave de Acesso + Item
     if not df_resultado.empty:
         df_resultado.drop_duplicates(subset=['CHAVE_ACESSO', 'AC'], keep='first', inplace=True)
 
@@ -116,8 +117,11 @@ def extrair_dados_xml(files, fluxo):
 def gerar_excel_final(df_ent, df_sai):
     memoria = io.BytesIO()
     with pd.ExcelWriter(memoria, engine='xlsxwriter') as escritor:
-        if not df_ent.empty: df_ent.to_excel(escritor, sheet_name='ENTRADAS', index=False)
+        if not df_ent.empty: 
+            df_ent.to_excel(escritor, sheet_name='ENTRADAS', index=False)
+        
         if not df_sai.empty: 
+            # Saídas e todas as abas técnicas replicadas apenas com a coluna STATUS ao final
             df_sai.to_excel(escritor, sheet_name='SAIDAS', index=False)
             df_sai.to_excel(escritor, sheet_name='ICMS', index=False)
             df_sai.to_excel(escritor, sheet_name='IPI', index=False)
@@ -126,4 +130,5 @@ def gerar_excel_final(df_ent, df_sai):
         else:
             for aba in ['SAIDAS', 'ICMS', 'IPI', 'PIS_COFINS', 'DIFAL']:
                 pd.DataFrame().to_excel(escritor, sheet_name=aba, index=False)
+
     return memoria.getvalue()
