@@ -44,7 +44,6 @@ def extrair_dados_xml(files, fluxo, df_autenticidade=None):
                 }
 
                 if imp is not None:
-                    # ICMS
                     icms_nodo = imp.find('.//ICMS')
                     if icms_nodo is not None:
                         for nodo in icms_nodo:
@@ -54,7 +53,6 @@ def extrair_dados_xml(files, fluxo, df_autenticidade=None):
                             if nodo.find('vICMS') is not None: linha["VLR-ICMS"] = float(nodo.find('vICMS').text)
                             if nodo.find('pICMS') is not None: linha["ALQ-ICMS"] = float(nodo.find('pICMS').text)
                     
-                    # PIS/COFINS
                     pis = imp.find('.//PIS')
                     if pis is not None:
                         for p in pis:
@@ -67,19 +65,14 @@ def extrair_dados_xml(files, fluxo, df_autenticidade=None):
                             if c.find('CST') is not None: linha["CST-COF"] = c.find('CST').text.zfill(2)
                             if c.find('vCOFINS') is not None: linha["VAL-COF"] = float(c.find('vCOFINS').text)
 
-                    # IPI
                     ipi_nodo = imp.find('.//IPI')
                     if ipi_nodo is not None:
                         cst_i = ipi_nodo.find('.//CST')
                         if cst_i is not None: linha["CST-IPI"] = cst_i.text.zfill(2)
-                        vbc_i = ipi_nodo.find('.//vBC')
-                        if vbc_i is not None: linha["BC-IPI"] = float(vbc_i.text)
-                        pipi = ipi_nodo.find('.//pIPI')
-                        if pipi is not None: linha["ALQ-IPI"] = float(pipi.text)
-                        vipi = ipi_nodo.find('.//vIPI')
-                        if vipi is not None: linha["VAL-IPI"] = float(vipi.text)
+                        if ipi_nodo.find('.//vBC') is not None: linha["BC-IPI"] = float(ipi_nodo.find('.//vBC').text)
+                        if ipi_nodo.find('.//pIPI') is not None: linha["ALQ-IPI"] = float(ipi_nodo.find('.//pIPI').text)
+                        if ipi_nodo.find('.//vIPI') is not None: linha["VAL-IPI"] = float(ipi_nodo.find('.//vIPI').text)
 
-                    # DIFAL
                     difal_nodo = imp.find('.//ICMSUFDest')
                     if difal_nodo is not None:
                         v_difal = difal_nodo.find('vICMSUFDest')
@@ -135,7 +128,7 @@ def gerar_excel_final(df_ent, df_sai):
         return pd.Series(["; ".join(diag) if diag else "✅ Correto", f"P/C: {row['CST-PIS']}/{row['CST-COF']}", f"P/C: {cp_e}/{cc_e}", " + ".join(acao) if acao else "✅ Correto"])
     df_pc[['Diagnóstico', 'CST XML (P/C)', 'CST Esperado (P/C)', 'Ação']] = df_pc.apply(audit_pc, axis=1)
 
-    # --- ABA IPI (AJUSTADA COM "✅ CORRETO") ---
+    # --- ABA IPI ---
     df_ipi = df_sai.copy()
     def audit_ipi(row):
         ncm = str(row['NCM']).zfill(8); info = base_pc[base_pc['NCM_KEY'] == ncm] if not base_pc.empty else pd.DataFrame()
@@ -143,36 +136,34 @@ def gerar_excel_final(df_ent, df_sai):
         try: ci_e, ai_e = str(info.iloc[0]['CST_IPI']).zfill(2), float(info.iloc[0]['ALQ_IPI'])
         except: ci_e, ai_e = "50", 0.0
         v_e = row['BC-IPI'] * (ai_e / 100); diag, acao = [], []
-        
-        if str(row['CST-IPI']) != ci_e: 
-            diag.append("CST: Divergente"); acao.append(f"Cc-e (CST IPI {ci_e})")
-        if abs(row['VAL-IPI'] - v_e) > 0.01: 
-            diag.append("Valor: Divergente"); acao.append("Complementar" if row['VAL-IPI'] < v_e else "Estornar")
-            
-        return pd.Series([
-            "; ".join(diag) if diag else "✅ Correto", 
-            row['CST-IPI'], ci_e, format_brl(row['VAL-IPI']), format_brl(v_e), 
-            " + ".join(acao) if acao else "✅ Correto", 
-            format_brl(max(0, v_e - row['VAL-IPI']))
-        ])
+        if str(row['CST-IPI']) != ci_e: diag.append("CST: Divergente"); acao.append(f"Cc-e (CST IPI {ci_e})")
+        if abs(row['VAL-IPI'] - v_e) > 0.01: diag.append("Valor: Divergente"); acao.append("Complementar" if row['VAL-IPI'] < v_e else "Estornar")
+        return pd.Series(["; ".join(diag) if diag else "✅ Correto", row['CST-IPI'], ci_e, format_brl(row['VAL-IPI']), format_brl(v_e), " + ".join(acao) if acao else "✅ Correto", format_brl(max(0, v_e - row['VAL-IPI']))])
     df_ipi[['Diagnóstico', 'CST XML', 'CST Base', 'IPI XML', 'IPI Esperado', 'Ação', 'Complemento']] = df_ipi.apply(audit_ipi, axis=1)
 
-    # --- ABA DIFAL ---
+    # --- ABA DIFAL (RESTAURADA COM ✅ CORRETO) ---
     df_difal = df_sai.copy()
     def audit_difal(row):
         is_inter = row['UF_EMIT'] != row['UF_DEST']
         cfop = str(row['CFOP'])
-        cfops_difal = ['6107', '6108', '6933', '6404']
+        cfops_difal_obrigatorio = ['6107', '6108', '6933', '6404']
         diag, acao = [], []
         if is_inter:
-            if cfop in cfops_difal:
+            if cfop in cfops_difal_obrigatorio:
                 if row['VAL-DIFAL'] == 0:
                     diag.append(f"CFOP {cfop}: DIFAL Obrigatório")
                     acao.append("Emitir Complementar de DIFAL")
-                else: diag.append("✅ DIFAL OK")
-            else: diag.append(f"Inter: CFOP {cfop}")
-        else: diag.append(f"✅ Interna ({cfop})")
-        return pd.Series(["; ".join(diag), format_brl(row['VAL-DIFAL']), " + ".join(acao) if acao else "✅ OK"])
+                else: 
+                    diag.append("✅ DIFAL Destacado")
+                    acao.append("✅ Correto")
+            else: 
+                diag.append(f"Operação Inter (CFOP {cfop})")
+                acao.append("✅ Correto")
+        else:
+            diag.append(f"✅ Operação Interna")
+            acao.append("✅ Correto")
+            
+        return pd.Series(["; ".join(diag), format_brl(row['VAL-DIFAL']), acao])
     df_difal[['Diagnóstico', 'DIFAL XML', 'Ação']] = df_difal.apply(audit_difal, axis=1)
 
     mem = io.BytesIO()
