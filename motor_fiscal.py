@@ -141,29 +141,31 @@ def gerar_excel_final(df_ent, df_sai):
         return pd.Series(["; ".join(diag) if diag else "✅ Correto", row['CST-IPI'], ci_e, format_brl(row['VAL-IPI']), format_brl(v_e), " + ".join(acao) if acao else "✅ Correto", format_brl(max(0, v_e - row['VAL-IPI']))])
     df_ipi[['Diagnóstico', 'CST XML', 'CST Base', 'IPI XML', 'IPI Esperado', 'Ação', 'Complemento']] = df_ipi.apply(audit_ipi, axis=1)
 
-    # --- ABA DIFAL (RESTAURADA COM ✅ CORRETO) ---
+    # --- ABA DIFAL (AJUSTADA: ✅ CORRETO NO DIAGNÓSTICO E NA AÇÃO) ---
     df_difal = df_sai.copy()
     def audit_difal(row):
         is_inter = row['UF_EMIT'] != row['UF_DEST']
         cfop = str(row['CFOP'])
         cfops_difal_obrigatorio = ['6107', '6108', '6933', '6404']
         diag, acao = [], []
+        
         if is_inter:
             if cfop in cfops_difal_obrigatorio:
                 if row['VAL-DIFAL'] == 0:
                     diag.append(f"CFOP {cfop}: DIFAL Obrigatório")
                     acao.append("Emitir Complementar de DIFAL")
                 else: 
-                    diag.append("✅ DIFAL Destacado")
+                    diag.append("✅ Correto")
                     acao.append("✅ Correto")
             else: 
-                diag.append(f"Operação Inter (CFOP {cfop})")
+                diag.append("✅ Correto") # Operação interestadual que não exige DIFAL obrigatoriamente
                 acao.append("✅ Correto")
         else:
-            diag.append(f"✅ Operação Interna")
+            diag.append("✅ Correto") # Operação interna
             acao.append("✅ Correto")
             
-        return pd.Series(["; ".join(diag), format_brl(row['VAL-DIFAL']), acao])
+        return pd.Series(["; ".join(diag), format_brl(row['VAL-DIFAL']), "; ".join(acao)])
+
     df_difal[['Diagnóstico', 'DIFAL XML', 'Ação']] = df_difal.apply(audit_difal, axis=1)
 
     mem = io.BytesIO()
