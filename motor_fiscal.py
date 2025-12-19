@@ -147,7 +147,7 @@ def gerar_excel_final(df_ent, df_sai, file_ger_ent=None, file_ger_sai=None):
     df_dest.columns = ['ESTADO', 'ST', 'DIFAL', 'FCP', 'FCP-ST']
     for col in ['ST', 'DIFAL', 'FCP', 'FCP-ST']: df_dest[col] = df_dest[col].apply(format_brl)
 
-    # --- ABAS GERENCIAMENTO (FORÇANDO CABEÇALHOS) ---
+    # --- ABAS GERENCIAMENTO (FORÇANDO NF COMO TEXTO) ---
     def read_manager(f, cols):
         if not f: return pd.DataFrame([{"AVISO": "Não enviado"}])
         try:
@@ -157,10 +157,10 @@ def gerar_excel_final(df_ent, df_sai, file_ger_ent=None, file_ger_sai=None):
                 try:
                     txt = raw.decode(enc)
                     sep = ';' if txt.count(';') > txt.count(',') else ','
-                    # Lê ignorando o cabeçalho original e forçando os nomes das colunas enviados
-                    return pd.read_csv(io.StringIO(txt), sep=sep, header=0, names=cols, engine='python')
+                    # dtype=str força a leitura da coluna 0 (NF) como texto para evitar conversão em data
+                    return pd.read_csv(io.StringIO(txt), sep=sep, header=0, names=cols, engine='python', dtype={cols[0]: str})
                 except: continue
-            return pd.read_csv(io.BytesIO(raw), sep=None, engine='python', names=cols, header=0)
+            return pd.read_csv(io.BytesIO(raw), sep=None, engine='python', names=cols, header=0, dtype={cols[0]: str})
         except: return pd.DataFrame([{"ERRO": "Falha na leitura do CSV"}])
 
     cols_sai = ['NF','DATA_EMISSAO','CNPJ','Ufp','VC','AC','CFOP','COD_ITEM','VUNIT','QTDE','VITEM','DESC','FRETE','SEG','OUTRAS','VC_ITEM','CST','Coluna2','Coluna3','BC_ICMS','ALIQ_ICMS','ICMS','BC_ICMSST','ICMSST','IPI','CST_PIS','BC_PIS','PIS','CST_COF','BC_COF','COF']
