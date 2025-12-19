@@ -1,4 +1,3 @@
-
 import streamlit as st
 import os
 import io
@@ -73,11 +72,15 @@ with col_ent:
     st.markdown("### 📥 1. Entradas")
     xml_ent = st.file_uploader("📂 XMLs de Entrada", type='xml', accept_multiple_files=True, key="ue")
     aut_ent = st.file_uploader("🔍 Autenticidade Entrada", type=['xlsx'], key="ae")
+    # Novo campo adicionado abaixo de Autenticidade
+    ger_ent = st.file_uploader("📊 Gerenc. Entradas", type=['xlsx'], key="ge")
 
 with col_sai:
     st.markdown("### 📤 2. Saídas")
     xml_sai = st.file_uploader("📂 XMLs de Saída", type='xml', accept_multiple_files=True, key="us")
     aut_sai = st.file_uploader("🔍 Autenticidade Saída", type=['xlsx'], key="as")
+    # Novo campo adicionado abaixo de Autenticidade
+    ger_sai = st.file_uploader("📊 Gerenc. Saídas", type=['xlsx'], key="gs")
 
 # --- EXECUÇÃO ---
 st.markdown("<br>", unsafe_allow_html=True)
@@ -85,7 +88,7 @@ if st.button("🚀 EXECUTAR AUDITORIA", type="primary", use_container_width=True
     if not xml_ent and not xml_sai:
         st.error("Por favor, carregue os arquivos XML.")
     else:
-        with st.spinner("O Sentinela está processando e cruzando o Status..."):
+        with st.spinner("O Sentinela está processando e cruzando o Status... 🧡"):
             df_autent_data = None
             arq_aut = aut_sai if aut_sai else aut_ent
             if arq_aut:
@@ -95,10 +98,10 @@ if st.button("🚀 EXECUTAR AUDITORIA", type="primary", use_container_width=True
             df_e = extrair_dados_xml(xml_ent, "Entrada", df_autenticidade=df_autent_data)
             df_s = extrair_dados_xml(xml_sai, "Saída", df_autenticidade=df_autent_data)
             
-            # Geração do Excel com as novas colunas de análise nas abas
-            excel_binario = gerar_excel_final(df_e, df_s)
+            # Geração do Excel incluindo os arquivos de Gerenciamento
+            excel_binario = gerar_excel_final(df_e, df_s, file_ger_ent=ger_ent, file_ger_sai=ger_sai)
             
-            st.success("Análise concluída!")
+            st.success("Análise concluída! 🧡")
             st.download_button(
                 label="💾 BAIXAR RELATÓRIO",
                 data=excel_binario,
