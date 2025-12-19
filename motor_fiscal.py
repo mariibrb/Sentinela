@@ -29,8 +29,9 @@ def extrair_dados_xml(files, fluxo, df_autenticidade=None):
                 prod = det.find('prod')
                 imp = det.find('imposto')
                 
-                # Blindagem: NCM com 8 dígitos para o Procv funcionar
-                ncm_limpo = re.sub(r'\D', '', buscar('NCM', prod)).zfill(8)
+                # BLINDAGEM DO NCM: Remove pontos e garante 8 dígitos com zero à frente
+                ncm_bruto = buscar('NCM', prod)
+                ncm_limpo = re.sub(r'\D', '', ncm_bruto).zfill(8)
                 
                 linha = {
                     "CHAVE_ACESSO": chave_acesso, "NUM_NF": buscar('nNF'),
@@ -60,28 +61,31 @@ def extrair_dados_xml(files, fluxo, df_autenticidade=None):
 def gerar_excel_final(df_ent, df_sai):
     try:
         base_t = pd.read_excel(".streamlit/Base_ICMS.xlsx")
+        # BLINDAGEM DA BASE: Converte NCM para string de 8 dígitos (mesmo que o Excel tenha tirado o zero)
         base_t['NCM_KEY'] = base_t.iloc[:, 0].astype(str).str.replace(r'\D', '', regex=True).str.zfill(8).str.strip()
     except: 
         base_t = pd.DataFrame(columns=['NCM_KEY'])
 
-    # Garante que o download não quebre se os dados estiverem vazios
     if df_sai is None or df_sai.empty: 
         df_sai = pd.DataFrame([{"AVISO": "Nenhum dado de Saída processado"}])
 
     df_icms_audit = df_sai.copy()
     tem_entradas = df_ent is not None and not df_ent.empty
+    
+    # Bônus ST na Entrada (Independente da auditoria principal)
     ncms_ent_st = df_ent[(df_ent['CST-ICMS']=="60") | (df_ent['ICMS-ST'] > 0)]['NCM'].unique().tolist() if tem_entradas else []
 
     def format_brl(v): return f"R$ {v:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
     def auditoria_final(row):
         if "AVISO" in row: return pd.Series(["-"] * 7)
-        ncm_atual = str(row['NCM']).strip().zfill(8)
+        ncm_atual = str(row['NCM']).strip().zfill(8) # Garante busca com 8 dígitos
         info_ncm = base_t[base_t['NCM_KEY'] == ncm_atual]
         
-        # Coluna Bônus: ST na Entrada
+        # 1. Coluna Bônus: ST na Entrada
         st_entrada = ("✅ ST Localizado" if ncm_atual in ncms_ent_st else "❌ Sem ST na Entrada") if tem_entradas else "⚠️ Entrada não enviada"
 
+        # 2. Validação contra a Base
         if info_ncm.empty:
             return pd.Series([st_entrada, f"NCM {ncm_atual} Ausente na Base", format_brl(row['VLR-ICMS']), "R$ 0,00", "Cadastrar NCM", "R$ 0,00", "Não"])
 
@@ -101,6 +105,8 @@ def gerar_excel_final(df_ent, df_sai):
 
         comp_num = (aliq_esp - row['ALQ-ICMS']) * row['BC-ICMS'] / 100 if (row['ALQ-ICMS'] < aliq_esp and cst_xml != "60") else 0.0
         res = "; ".join(diag_list) if diag_list else "✅ Correto"
+        
+        # Padronização da Ação: "✅ Correto" se estiver tudo certo
         acao = "✅ Correto" if res == "✅ Correto" else ("Cc-e" if "CST" in res and comp_num == 0 else "Complemento/Estorno")
         
         return pd.Series([st_entrada, res, format_brl(row['VLR-ICMS']), format_brl(row['BC-ICMS'] * aliq_esp / 100 if aliq_esp > 0 else 0), acao, format_brl(comp_num), "Sim" if acao == "Cc-e" else "Não"])
