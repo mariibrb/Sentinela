@@ -92,7 +92,7 @@ def gerar_excel_final(df_ent, df_sai, file_ger_ent=None, file_ger_sai=None):
     if df_sai is None: df_sai = pd.DataFrame()
     if df_ent is None: df_ent = pd.DataFrame()
 
-    # --- AUDITORIAS ORIGINAIS (INTOCADAS) ---
+    # --- ABA ICMS ---
     df_icms_audit = df_sai.copy(); tem_e = not df_ent.empty
     ncm_st = df_ent[(df_ent['CST-ICMS']=="60") | (df_ent['ICMS-ST'] > 0)]['NCM'].unique().tolist() if tem_e else []
     def audit_icms(row):
@@ -107,6 +107,7 @@ def gerar_excel_final(df_ent, df_sai, file_ger_ent=None, file_ger_sai=None):
     if not df_icms_audit.empty:
         df_icms_audit[['ST na Entrada', 'Diagnóstico', 'ICMS XML', 'ICMS Esperado', 'Ação', 'Complemento']] = df_icms_audit.apply(audit_icms, axis=1)
 
+    # --- ABA PIS/COFINS ---
     df_pc_audit = df_sai.copy()
     def audit_pc(row):
         ncm = str(row['NCM']).zfill(8); info = base_pc[base_pc['NCM_KEY'] == ncm] if not base_pc.empty else pd.DataFrame()
@@ -120,6 +121,7 @@ def gerar_excel_final(df_ent, df_sai, file_ger_ent=None, file_ger_sai=None):
     if not df_pc_audit.empty:
         df_pc_audit[['Diagnóstico', 'CST XML (P/C)', 'CST Esperado (P/C)', 'Ação']] = df_pc_audit.apply(audit_pc, axis=1)
 
+    # --- ABA IPI ---
     df_ipi_audit = df_sai.copy()
     def audit_ipi(row):
         ncm = str(row['NCM']).zfill(8); info = base_pc[base_pc['NCM_KEY'] == ncm] if not base_pc.empty else pd.DataFrame()
@@ -133,6 +135,7 @@ def gerar_excel_final(df_ent, df_sai, file_ger_ent=None, file_ger_sai=None):
     if not df_ipi_audit.empty:
         df_ipi_audit[['Diagnóstico', 'CST XML', 'CST Base', 'IPI XML', 'IPI Esperado', 'Ação', 'Complemento']] = df_ipi_audit.apply(audit_ipi, axis=1)
 
+    # --- ABA DIFAL ---
     df_difal_audit = df_sai.copy()
     def audit_difal(row):
         is_i = row['UF_EMIT'] != row['UF_DEST']; cfop = str(row['CFOP']); diag, acao = [], []
@@ -146,42 +149,43 @@ def gerar_excel_final(df_ent, df_sai, file_ger_ent=None, file_ger_sai=None):
     if not df_difal_audit.empty:
         df_difal_audit[['Diagnóstico', 'DIFAL XML', 'Ação']] = df_difal_audit.apply(audit_difal, axis=1)
 
+    # --- ABA ICMS_DESTINO ---
     if not df_sai.empty:
         df_dest = df_sai.groupby('UF_DEST').agg({'ICMS-ST': 'sum', 'VAL-DIFAL': 'sum', 'VAL-FCP': 'sum', 'VAL-FCPST': 'sum'}).reset_index()
         df_dest.columns = ['ESTADO', 'ST', 'DIFAL', 'FCP', 'FCP-ST']
         for col in ['ST', 'DIFAL', 'FCP', 'FCP-ST']: df_dest[col] = df_dest[col].apply(format_brl)
     else: df_dest = pd.DataFrame()
 
-    # --- ÚNICA PARTE ALTERADA: LEITURA ROBUSTA DOS GERENCIAIS ---
-    def force_read_gerencial(f, cols):
+    # --- LEITURA DOS GERENCIAIS (ALTERAÇÃO SOLICITADA) ---
+    def load_csv(f, cols):
         if not f: return pd.DataFrame()
         try:
             f.seek(0)
             raw = f.read()
-            # Tenta decodificar de forma flexível para evitar caracteres estranhos
+            # Tenta decodificar de forma flexível e detectar o separador
             for enc in ['utf-8-sig', 'latin1', 'iso-8859-1']:
                 try:
                     txt = raw.decode(enc)
                     sep = ';' if txt.count(';') > txt.count(',') else ','
-                    # Lê forçando a coluna 0 (NF) como string
+                    # header=None + names garante o cabeçalho. dtype={0:str} trava a Coluna A como texto.
                     df = pd.read_csv(io.StringIO(txt), sep=sep, header=None, engine='python', dtype={0: str})
-                    # Se houver cabeçalho de texto, remove
+                    # Se houver cabeçalho de texto no arquivo original, removemos
                     if not str(df.iloc[0, 0]).isdigit(): df = df.iloc[1:]
                     df.columns = cols
                     return df
                 except: continue
-            return pd.DataFrame()
-        except: return pd.DataFrame()
+            return pd.DataFrame([{"ERRO": "Formato de arquivo incompatível"}])
+        except: return pd.DataFrame([{"ERRO": "Falha na leitura"}])
 
     cols_sai = ['NF','DATA_EMISSAO','CNPJ','Ufp','VC','AC','CFOP','COD_ITEM','VUNIT','QTDE','VITEM','DESC','FRETE','SEG','OUTRAS','VC_ITEM','CST','Coluna2','Coluna3','BC_ICMS','ALIQ_ICMS','ICMS','BC_ICMSST','ICMSST','IPI','CST_PIS','BC_PIS','PIS','CST_COF','BC_COF','COF']
     cols_ent = ['NUM_NF','DATA_EMISSAO','CNPJ','UF','VLR_NF','AC','CFOP','COD_PROD','DESCR','NCM','UNID','VUNIT','QTDE','VPROD','DESC','FRETE','SEG','DESP','VC','CST-ICMS','Coluna2','BC-ICMS','VLR-ICMS','BC-ICMS-ST','ICMS-ST','VLR_IPI','CST_PIS','BC_PIS','VLR_PIS','CST_COF','BC_COF','VLR_COF']
     
-    df_ge = force_read_gerencial(file_ger_ent, cols_ent)
-    df_gs = force_read_gerencial(file_ger_sai, cols_sai)
+    df_ge = load_csv(file_ger_ent, cols_ent)
+    df_gs = load_csv(file_ger_sai, cols_sai)
 
-    # --- GRAVAÇÃO DAS ABAS (MANTENDO A ORDEM) ---
     mem = io.BytesIO()
     with pd.ExcelWriter(mem, engine='xlsxwriter') as wr:
+        # Grava abas originais
         if not df_ent.empty: df_ent.to_excel(wr, sheet_name='ENTRADAS', index=False)
         if not df_sai.empty: df_sai.to_excel(wr, sheet_name='SAIDAS', index=False)
         if not df_icms_audit.empty: df_icms_audit.to_excel(wr, sheet_name='ICMS', index=False)
@@ -190,15 +194,15 @@ def gerar_excel_final(df_ent, df_sai, file_ger_ent=None, file_ger_sai=None):
         if not df_difal_audit.empty: df_difal_audit.to_excel(wr, sheet_name='DIFAL', index=False)
         if not df_dest.empty: df_dest.to_excel(wr, sheet_name='ICMS_Destino', index=False)
         
-        # Estas abas agora aparecerão sempre que o arquivo for enviado
-        if not df_ge.empty: df_ge.to_excel(wr, sheet_name='Gerenc. Entradas', index=False)
-        if not df_gs.empty: df_gs.to_excel(wr, sheet_name='Gerenc. Saídas', index=False)
+        # Grava abas gerenciais sempre que o arquivo for enviado
+        if file_ger_ent: df_ge.to_excel(wr, sheet_name='Gerenc. Entradas', index=False)
+        if file_ger_sai: df_gs.to_excel(wr, sheet_name='Gerenc. Saídas', index=False)
 
-        # Ajuste de Formato para Coluna NF (A)
+        # Ajuste de Formato para Coluna A (NF)
         workbook = wr.book
-        fmt_text = workbook.add_format({'num_format': '@'}) # Formato Texto
+        fmt_text = workbook.add_format({'num_format': '@'})
         for s_name in ['Gerenc. Entradas', 'Gerenc. Saídas']:
             if s_name in wr.sheets:
-                wr.sheets[s_name].set_column('A:A', 15, fmt_text)
+                wr.sheets[s_name].set_column('A:A', 18, fmt_text)
 
     return mem.getvalue()
