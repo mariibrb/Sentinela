@@ -38,7 +38,7 @@ def extrair_dados_xml(files, fluxo, df_autenticidade=None):
                 prod = det.find('prod')
                 imp = det.find('imposto')
                 
-                # Blindagem: NCM sempre com 8 dígitos para o Procv funcionar
+                # NCM Blindado para Procv (8 dígitos)
                 ncm_limpo = re.sub(r'\D', '', buscar('NCM', prod)).zfill(8)
                 
                 linha = {
@@ -85,20 +85,24 @@ def gerar_excel_final(df_ent, df_sai):
 
     df_icms_audit = df_sai.copy()
     
-    # 1. Mapeamento opcional de entradas (Bônus)
+    # 1. Mapeamento de Entradas (Processado em segundo plano)
+    tem_entradas = df_ent is not None and not df_ent.empty
     ncms_ent_st = []
-    if df_ent is not None and not df_ent.empty:
+    if tem_entradas:
         ncms_ent_st = df_ent[(df_ent['CST-ICMS']=="60") | (df_ent['ICMS-ST'] > 0)]['NCM'].unique().tolist()
 
     def format_brl(v): return f"R$ {v:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
-    def auditoria_soberana(row):
+    def auditoria_nova_coluna(row):
         ncm_atual = str(row['NCM']).strip().zfill(8)
         info_ncm = base_t[base_t['NCM_KEY'] == ncm_atual]
         
-        # Validação de Base: Sempre ocorre primeiro
+        # Coluna Bônus Inicializada
+        bonus_estoque = "N/A"
+        
+        # 1. Validação de NCM na Base
         if info_ncm.empty:
-            return pd.Series([f"NCM {ncm_atual} Ausente na Base", format_brl(row['VLR-ICMS']), "R$ 0,00", "Cadastrar NCM", "R$ 0,00", "Não"])
+            return pd.Series([f"NCM {ncm_atual} Ausente na Base", format_brl(row['VLR-ICMS']), "R$ 0,00", "Cadastrar NCM", "R$ 0,00", "Não", "Base Incompleta"])
 
         cst_esp = str(info_ncm.iloc[0, 2]).zfill(2)
         is_interna = row['UF_EMIT'] == row['UF_DEST']
@@ -107,16 +111,17 @@ def gerar_excel_final(df_ent, df_sai):
         diag_list = []
         cst_xml = str(row['CST-ICMS']).strip()
 
-        # AUDITORIA INDEPENDENTE DE SAÍDA (O XML contra a sua Base)
+        # 2. AUDITORIA SOBERANA (XML vs Base)
         if cst_xml == "60":
             if row['VLR-ICMS'] > 0: 
-                diag_list.append(f"CST 60: Destacado {format_brl(row['VLR-ICMS'])} | Esperado R$ 0,00")
-            
-            # Validação de Entrada: Só gera alerta SE os arquivos de entrada existirem e o NCM não estiver lá
-            if df_ent is not None and not df_ent.empty and ncm_atual not in ncms_ent_st:
-                diag_list.append(f"Analisar: NCM {ncm_atual} sem estoque ST (Entradas)")
-            
+                diag_list.append(f"CST 60 com destaque: {format_brl(row['VLR-ICMS'])} | Esperado R$ 0,00")
             aliq_esp = 0.0
+            
+            # 3. VALIDAÇÃO DE ESTOQUE (Coluna Extra)
+            if tem_entradas:
+                bonus_estoque = "✅ ST Localizado na Entrada" if ncm_atual in ncms_ent_st else "❌ Sem Histórico de ST"
+            else:
+                bonus_estoque = "⚠️ Entradas não carregadas"
         else:
             if aliq_esp > 0 and row['VLR-ICMS'] == 0: 
                 diag_list.append(f"ICMS: Destacado R$ 0,00 | Esperado {aliq_esp}%")
@@ -128,21 +133,21 @@ def gerar_excel_final(df_ent, df_sai):
         complemento_num = (aliq_esp - row['ALQ-ICMS']) * row['BC-ICMS'] / 100 if (row['ALQ-ICMS'] < aliq_esp and cst_xml != "60") else 0.0
         res = "; ".join(diag_list) if diag_list else "✅ Correto"
         
-        # Definição de Ação Curta
+        # Definição de Ação
         if res == "✅ Correto": acao = "✅ Correto"
-        elif "Analisar" in res: acao = "Validar Entrada"
         elif "CST" in res and complemento_num == 0: acao = "Cc-e"
         else: acao = "Complemento/Estorno"
 
         cce = "Sim" if acao == "Cc-e" else "Não"
-        return pd.Series([res, format_brl(row['VLR-ICMS']), format_brl(row['BC-ICMS'] * aliq_esp / 100 if aliq_esp > 0 else 0), acao, format_brl(complemento_num), cce])
+        
+        return pd.Series([res, format_brl(row['VLR-ICMS']), format_brl(row['BC-ICMS'] * aliq_esp / 100 if aliq_esp > 0 else 0), acao, format_brl(complemento_num), cce, bonus_estoque])
 
-    df_icms_audit[['Diagnóstico', 'ICMS XML', 'ICMS Esperado', 'Ação', 'Complemento', 'Cc-e']] = df_icms_audit.apply(auditoria_soberana, axis=1)
+    # Aplicação do novo layout de colunas
+    df_icms_audit[['Diagnóstico', 'ICMS XML', 'ICMS Esperado', 'Ação', 'Complemento', 'Cc-e', 'Validação de Estoque (ST)']] = df_icms_audit.apply(auditoria_nova_coluna, axis=1)
 
     mem = io.BytesIO()
     with pd.ExcelWriter(mem, engine='xlsxwriter') as wr:
-        if df_ent is not None and not df_ent.empty:
-            df_ent.to_excel(wr, sheet_name='ENTRADAS', index=False)
+        if tem_entradas: df_ent.to_excel(wr, sheet_name='ENTRADAS', index=False)
         df_sai.to_excel(wr, sheet_name='SAIDAS', index=False)
         df_icms_audit.to_excel(wr, sheet_name='ICMS', index=False)
         for aba in ['IPI', 'PIS_COFINS', 'DIFAL']: df_sai.to_excel(wr, sheet_name=aba, index=False)
