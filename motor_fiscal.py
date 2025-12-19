@@ -6,7 +6,7 @@ from datetime import datetime
 
 def extrair_dados_xml(xml_files, tipo, df_autenticidade=None):
     """
-    Extrai dados detalhados dos XMLs de NF-e, incluindo bases e impostos.
+    Extrai dados detalhados dos XMLs de NF-e e realiza o cruzamento seguro.
     """
     registros = []
     
@@ -20,104 +20,94 @@ def extrair_dados_xml(xml_files, tipo, df_autenticidade=None):
             ns = {'nfe': 'http://www.portalfiscal.inf.br/nfe'}
 
             # Informações da Nota
-            chave = root.find(".//nfe:infNFe", ns).attrib['Id'][3:] if root.find(".//nfe:infNFe", ns) is not None else "N/A"
+            infNFe = root.find(".//nfe:infNFe", ns)
+            chave = infNFe.attrib['Id'][3:] if infNFe is not None else "N/A"
             
             # Detalhamento de Itens
             for det in root.findall(".//nfe:det", ns):
                 prod = det.find("nfe:prod", ns)
                 imposto = det.find("nfe:imposto", ns)
                 
-                # Dados Básicos
                 item = {
                     'CHAVE': chave,
                     'TIPO': tipo,
                     'produto': prod.find("nfe:xProd", ns).text if prod is not None else "",
                     'ncm': prod.find("nfe:NCM", ns).text if prod is not None else "",
                     'valor_item': float(prod.find("nfe:vProd", ns).text) if prod is not None else 0.0,
+                    'base_calculo': 0.0,
+                    'aliquota_pis': 0.0,
+                    'valor_pis_xml': 0.0,
+                    'aliquota_cofins': 0.0,
+                    'valor_cofins_xml': 0.0,
+                    'aliquota_ipi': 0.0,
+                    'valor_ipi_xml': 0.0
                 }
 
-                # ICMS
-                icms_tag = imposto.find(".//nfe:ICMS", ns)
-                item['valor_icms'] = 0.0
-                if icms_tag is not None:
-                    v_icms = icms_tag.find(".//nfe:vICMS", ns)
-                    if v_icms is not None: item['valor_icms'] = float(v_icms.text)
+                if imposto is not None:
+                    # PIS
+                    pis = imposto.find(".//nfe:PIS", ns)
+                    if pis is not None:
+                        vbc = pis.find(".//nfe:vBC", ns)
+                        ppis = pis.find(".//nfe:pPIS", ns)
+                        vpis = pis.find(".//nfe:vPIS", ns)
+                        if vbc is not None: item['base_calculo'] = float(vbc.text)
+                        if ppis is not None: item['aliquota_pis'] = float(ppis.text)
+                        if vpis is not None: item['valor_pis_xml'] = float(vpis.text)
 
-                # PIS
-                pis_tag = imposto.find(".//nfe:PIS", ns)
-                item['base_calculo'] = 0.0
-                item['aliquota_pis'] = 0.0
-                item['valor_pis_xml'] = 0.0
-                if pis_tag is not None:
-                    v_bc = pis_tag.find(".//nfe:vBC", ns)
-                    p_pis = pis_tag.find(".//nfe:pPIS", ns)
-                    v_pis = pis_tag.find(".//nfe:vPIS", ns)
-                    if v_bc is not None: item['base_calculo'] = float(v_bc.text)
-                    if p_pis is not None: item['aliquota_pis'] = float(p_pis.text)
-                    if v_pis is not None: item['valor_pis_xml'] = float(v_pis.text)
+                    # COFINS
+                    cofins = imposto.find(".//nfe:COFINS", ns)
+                    if cofins is not None:
+                        pcof = cofins.find(".//nfe:pCOFINS", ns)
+                        vcof = cofins.find(".//nfe:vCOFINS", ns)
+                        if pcof is not None: item['aliquota_cofins'] = float(pcof.text)
+                        if vcof is not None: item['valor_cofins_xml'] = float(vcof.text)
 
-                # COFINS
-                cofins_tag = imposto.find(".//nfe:COFINS", ns)
-                item['aliquota_cofins'] = 0.0
-                item['valor_cofins_xml'] = 0.0
-                if cofins_tag is not None:
-                    p_cof = cofins_tag.find(".//nfe:pCOFINS", ns)
-                    v_cof = cofins_tag.find(".//nfe:vCOFINS", ns)
-                    if p_cof is not None: item['aliquota_cofins'] = float(p_cof.text)
-                    if v_cof is not None: item['valor_cofins_xml'] = float(v_cof.text)
-
-                # IPI
-                ipi_tag = imposto.find(".//nfe:IPI", ns)
-                item['aliquota_ipi'] = 0.0
-                item['valor_ipi_xml'] = 0.0
-                if ipi_tag is not None:
-                    p_ipi = ipi_tag.find(".//nfe:pIPI", ns)
-                    v_ipi = ipi_tag.find(".//nfe:vIPI", ns)
-                    if p_ipi is not None: item['aliquota_ipi'] = float(p_ipi.text)
-                    if v_ipi is not None: item['valor_ipi_xml'] = float(v_ipi.text)
+                    # IPI
+                    ipi = imposto.find(".//nfe:IPI", ns)
+                    if ipi is not None:
+                        pipi = ipi.find(".//nfe:pIPI", ns)
+                        vipi = ipi.find(".//nfe:vIPI", ns)
+                        if pipi is not None: item['aliquota_ipi'] = float(pipi.text)
+                        if vipi is not None: item['valor_ipi_xml'] = float(vipi.text)
 
                 registros.append(item)
-        except Exception as e:
+        except Exception:
             continue
 
     df = pd.DataFrame(registros)
     
-    # Aplicação da Autenticidade (Cruzamento de Status)
+    # --- CORREÇÃO DO KEYERROR (MERGE SEGURO) ---
     if df_autenticidade is not None and not df.empty:
-        df = df.merge(df_autenticidade[['CHAVE', 'STATUS']], on='CHAVE', how='left')
+        # Padroniza as colunas da autenticidade para maiúsculo para evitar erro de digitação
+        df_autenticidade.columns = [c.upper() for c in df_autenticidade.columns]
         
+        if 'CHAVE' in df_autenticidade.columns and 'STATUS' in df_autenticidade.columns:
+            df = df.merge(df_autenticidade[['CHAVE', 'STATUS']], on='CHAVE', how='left')
+        elif 'CHAVE' in df_autenticidade.columns:
+            df = df.merge(df_autenticidade[['CHAVE']], on='CHAVE', how='left')
+            
     return df
 
 def gerar_excel_final(df_e, df_s):
     """
-    Gera o Excel final com abas de Entradas, Saídas e Auditoria de Tributos.
+    Gera o Excel final com as colunas de ANALISE nas abas PISCOFINS e IPI.
     """
     output = io.BytesIO()
-    
-    # Conciliação para as abas de PISCOFINS e IPI
     df_consolidado = pd.concat([df_e, df_s], ignore_index=True)
 
-    # --- ABA PISCOFINS COM ANALISE ---
+    # --- ABA PISCOFINS ---
     df_piscofins = df_consolidado.copy()
     if not df_piscofins.empty:
-        # Soma o valor destacado e compara com o cálculo matemático
-        destacado = df_piscofins['valor_pis_xml'] + df_piscofins['valor_cofins_xml']
-        esperado = df_piscofins['base_calculo'] * ((df_piscofins['aliquota_pis'] + df_piscofins['aliquota_cofins']) / 100)
-        
-        df_piscofins['ANALISE'] = np.where(
-            abs(destacado - esperado) < 0.01, "CORRETO", "ESPERADO DESTACADO"
-        )
+        v_destacado = df_piscofins['valor_pis_xml'] + df_piscofins['valor_cofins_xml']
+        v_esperado = df_piscofins['base_calculo'] * ((df_piscofins['aliquota_pis'] + df_piscofins['aliquota_cofins']) / 100)
+        df_piscofins['ANALISE'] = np.where(abs(v_destacado - v_esperado) < 0.01, "CORRETO", "ESPERADO DESTACADO")
 
-    # --- ABA IPI COM ANALISE ---
+    # --- ABA IPI ---
     df_ipi = df_consolidado.copy()
     if not df_ipi.empty:
-        # Compara Valor IPI XML vs (Base * Alíquota)
-        esperado_ipi = df_ipi['base_calculo'] * (df_ipi['aliquota_ipi'] / 100)
-        df_ipi['ANALISE'] = np.where(
-            abs(df_ipi['valor_ipi_xml'] - esperado_ipi) < 0.01, "CORRETO", "ESPERADO DESTACADO"
-        )
+        v_ipi_esp = df_ipi['base_calculo'] * (df_ipi['aliquota_ipi'] / 100)
+        df_ipi['ANALISE'] = np.where(abs(df_ipi['valor_ipi_xml'] - v_ipi_esp) < 0.01, "CORRETO", "ESPERADO DESTACADO")
 
-    # Escrita das Abas
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
         if not df_e.empty: df_e.to_excel(writer, sheet_name='Entradas', index=False)
         if not df_s.empty: df_s.to_excel(writer, sheet_name='Saídas', index=False)
