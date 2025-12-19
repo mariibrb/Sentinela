@@ -83,16 +83,11 @@ def gerar_excel_final(df_ent, df_sai, file_ger_ent=None, file_ger_sai=None):
         base_icms['NCM_KEY'] = base_icms.iloc[:, 0].apply(limpar_txt).str.replace(r'\D', '', regex=True).str.zfill(8)
         base_icms['CST_KEY'] = base_icms.iloc[:, 2].apply(limpar_txt).str.zfill(2)
     except: base_icms = pd.DataFrame()
-    try:
-        base_pc = pd.read_excel(".streamlit/Base_CST_Pis_Cofins.xlsx")
-        base_pc['NCM_KEY'] = base_pc.iloc[:, 0].apply(limpar_txt).str.replace(r'\D', '', regex=True).str.zfill(8)
-        base_pc.columns = [c.upper() for c in base_pc.columns]
-    except: base_pc = pd.DataFrame()
 
     if df_sai is None: df_sai = pd.DataFrame()
     if df_ent is None: df_ent = pd.DataFrame()
 
-    # --- ABAS DE AUDITORIA (CONSERVADAS) ---
+    # --- ABA ICMS ---
     df_icms_audit = df_sai.copy(); tem_e = not df_ent.empty
     ncm_st = df_ent[(df_ent['CST-ICMS']=="60") | (df_ent['ICMS-ST'] > 0)]['NCM'].unique().tolist() if tem_e else []
     def audit_icms(row):
@@ -106,6 +101,13 @@ def gerar_excel_final(df_ent, df_sai, file_ger_ent=None, file_ger_sai=None):
         return pd.Series([st_e, "; ".join(diag) if diag else "✅ Correto", format_brl(row['VPROD']), format_brl(row['BC-ICMS']*aliq_e/100), " + ".join(acao) if acao else "✅ Correto", format_brl(max(0, (aliq_e-row['ALQ-ICMS'])*row['BC-ICMS']/100))])
     if not df_icms_audit.empty:
         df_icms_audit[['ST na Entrada', 'Diagnóstico', 'ICMS XML', 'ICMS Esperado', 'Ação', 'Complemento']] = df_icms_audit.apply(audit_icms, axis=1)
+
+    # --- ABA ICMS_DESTINO ---
+    if not df_sai.empty:
+        df_dest = df_sai.groupby('UF_DEST').agg({'ICMS-ST': 'sum', 'VAL-DIFAL': 'sum', 'VAL-FCP': 'sum', 'VAL-FCPST': 'sum'}).reset_index()
+        df_dest.columns = ['ESTADO', 'ST', 'DIFAL', 'FCP', 'FCP-ST']
+        for col in ['ST', 'DIFAL', 'FCP', 'FCP-ST']: df_dest[col] = df_dest[col].apply(format_brl)
+    else: df_dest = pd.DataFrame()
 
     # --- LEITURA GERENCIAIS ---
     def load_gerencial_flexible(f, target_cols):
@@ -132,47 +134,46 @@ def gerar_excel_final(df_ent, df_sai, file_ger_ent=None, file_ger_sai=None):
     df_gs = load_gerencial_flexible(file_ger_sai, c_sai)
 
     # --- NOVA ABA: APURAÇÃO PIS E COFINS (PADRÃO ESCRITÓRIO) ---
-    def calcular_apuracao_escritorio(ge, gs):
+    def gerar_apuracao_pc(ge, gs):
         if gs.empty and ge.empty: return pd.DataFrame()
         
-        # Conversores para garantir cálculo matemático
+        # Conversores para cálculo
         for c in ['VC', 'IPI', 'ICMS', 'BC_PIS', 'PIS', 'BC_COF', 'COF']:
             if c in gs.columns: gs[c] = pd.to_numeric(gs[c].astype(str).str.replace(',', '.'), errors='coerce').fillna(0)
         for c in ['VLR_NF', 'VLR_IPI', 'VLR-ICMS', 'BC_PIS', 'VLR_PIS', 'BC_COF', 'VLR_COF']:
             if c in ge.columns: ge[c] = pd.to_numeric(ge[c].astype(str).str.replace(',', '.'), errors='coerce').fillna(0)
 
-        # Seção DÉBITOS (CST 01)
-        df_deb = gs[gs['CST_PIS'].isin(['01', '1'])].groupby(['AC', 'CFOP']).agg({
-            'VC': 'sum', 'Coluna3': 'sum', 'ICMS': 'sum' # Coluna3 mapeada como IPI no seu sistema anterior
+        # Débitos CST 01
+        deb = gs[gs['CST_PIS'].isin(['01', '1'])].groupby(['AC', 'CFOP']).agg({
+            'VC': 'sum', 'Coluna3': 'sum', 'ICMS': 'sum' 
         }).reset_index()
-        df_deb.columns = ['ACUMULADOR', 'CFOP', 'Valor Contábil', 'IPI', 'ICMS']
-        df_deb['Base de Cálculo'] = df_deb['Valor Contábil'] - df_deb['IPI'] - df_deb['ICMS']
-        df_deb.insert(0, 'Tipo', 'DÉBITOS (CST 01)')
+        deb.columns = ['ACUMULADOR', 'CFOP', 'Valor Contábil', 'IPI', 'ICMS']
+        deb['Base de Cálculo'] = deb['Valor Contábil'] - deb['IPI'] - deb['ICMS']
+        deb.insert(0, 'TIPO', 'DÉBITOS (CST 01)')
 
-        # Seção CRÉDITOS
-        df_cred = ge.groupby(['AC', 'CFOP']).agg({
+        # Créditos Entrada
+        cred = ge.groupby(['AC', 'CFOP']).agg({
             'VLR_NF': 'sum', 'VLR_IPI': 'sum', 'VLR-ICMS': 'sum'
         }).reset_index()
-        df_cred.columns = ['ACUMULADOR', 'CFOP', 'Valor Contábil', 'IPI', 'ICMS']
-        df_cred['Base de Cálculo'] = df_cred['Valor Contábil'] - df_cred['IPI']
-        df_cred.insert(0, 'Tipo', 'CRÉDITOS')
+        cred.columns = ['ACUMULADOR', 'CFOP', 'Valor Contábil', 'IPI', 'ICMS']
+        cred['Base de Cálculo'] = cred['Valor Contábil'] - cred['IPI']
+        cred.insert(0, 'TIPO', 'CRÉDITOS')
 
-        res = pd.concat([df_deb, df_cred], ignore_index=True)
+        res = pd.concat([deb, cred], ignore_index=True)
         res['PIS (1,65%)'] = res['Base de Cálculo'] * 0.0165
         res['COFINS (7,6%)'] = res['Base de Cálculo'] * 0.076
         return res
 
-    df_apuracao_final = calcular_apuracao_escritorio(df_ge, df_gs)
+    df_apuracao = gerar_apuracao_pc(df_ge, df_gs)
 
-    # --- GRAVAÇÃO ---
     mem = io.BytesIO()
     with pd.ExcelWriter(mem, engine='xlsxwriter') as wr:
         if not df_ent.empty: df_ent.to_excel(wr, sheet_name='ENTRADAS', index=False)
         if not df_sai.empty: df_sai.to_excel(wr, sheet_name='SAIDAS', index=False)
         if not df_icms_audit.empty: df_icms_audit.to_excel(wr, sheet_name='ICMS', index=False)
         
-        # ABA SOLICITADA
-        if not df_apuracao_final.empty: df_apuracao_final.to_excel(wr, sheet_name='PIS e COFINS', index=False)
+        # Aba Padrão do Escritório
+        if not df_apuracao.empty: df_apuracao.to_excel(wr, sheet_name='PIS e COFINS', index=False)
         
         if not df_ge.empty: df_ge.to_excel(wr, sheet_name='Gerenc. Entradas', index=False)
         if not df_gs.empty: df_gs.to_excel(wr, sheet_name='Gerenc. Saídas', index=False)
