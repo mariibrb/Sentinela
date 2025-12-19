@@ -1,65 +1,129 @@
-import streamlit as st
-import os
-import io
 import pandas as pd
-from motor_fiscal import extrair_dados_xml, gerar_excel_final
+import xml.etree.ElementTree as ET
+import re
+import io
+import streamlit as st
 
-# --- CONFIGURAÇÃO VISUAL ---
-st.set_page_config(page_title="Nascel | Auditoria", page_icon="🧡", layout="wide")
+def extrair_dados_xml(files, fluxo):
+    """
+    Leitura binária ultra-resistente com bloqueio de duplicados por Chave de Acesso.
+    """
+    dados_lista = []
+    if not files: 
+        return pd.DataFrame()
 
-st.markdown("""
-    <style>
-    @import url('https://fonts.googleapis.com/css2?family=Quicksand:wght@400;600;700&display=swap');
-    html, body, [class*="css"] { font-family: 'Quicksand', sans-serif; }
-    .stApp { background-color: #F7F7F7; }
-    h1, h2, h3, h4 { color: #FF6F00 !important; font-weight: 700; }
-    div[data-testid="stVerticalBlock"] > div[data-testid="stVerticalBlock"] {
-        background-color: white; padding: 20px; border-radius: 20px; box-shadow: 0 4px 15px rgba(0,0,0,0.05);
-    }
-    .stButton>button { background-color: #FF6F00; color: white; border-radius: 25px; font-weight: bold; width: 100%; border: none; padding: 12px; }
-    .stButton>button:hover { background-color: #E65100; transform: scale(1.02); }
-    </style>
-""", unsafe_allow_html=True)
+    container_status = st.empty()
+    progresso = st.progress(0)
+    total_arquivos = len(files)
+    
+    for i, f in enumerate(files):
+        try:
+            f.seek(0)
+            conteudo_bruto = f.read()
+            texto_xml = conteudo_bruto.decode('utf-8', errors='replace')
+            
+            # Limpeza do XML para evitar erros de leitura
+            texto_xml = re.sub(r'<\?xml[^?]*\?>', '', texto_xml)
+            texto_xml = re.sub(r'\sxmlns(:\w+)?="[^"]+"', '', texto_xml)
+            
+            root = ET.fromstring(texto_xml)
+            
+            def buscar(caminho, raiz=root):
+                alvo = raiz.find(f'.//{caminho}')
+                return alvo.text if alvo is not None and alvo.text is not None else ""
 
-# --- SIDEBAR ---
-with st.sidebar:
-    if os.path.exists(".streamlit/nascel sem fundo.png"):
-        st.image(".streamlit/nascel sem fundo.png", use_container_width=True)
-    st.markdown("---")
-    with st.expander("📥 **Baixar Gabaritos**"):
-        df_m = pd.DataFrame(columns=['NCM', 'REFERENCIA', 'DADOS'])
-        buf = io.BytesIO()
-        with pd.ExcelWriter(buf, engine='xlsxwriter') as wr: df_m.to_excel(wr, index=False)
-        st.download_button("📄 Modelo ICMS", buf.getvalue(), "modelo_icms.xlsx", use_container_width=True)
-        st.download_button("📄 Modelo PIS/COFINS", buf.getvalue(), "modelo_pis_cofins.xlsx", use_container_width=True)
-    st.markdown("### ⚙️ Configurações")
-    with st.expander("🔄 **Atualizar Bases**"):
-        st.file_uploader("Base ICMS", type=['xlsx'], key='ui')
-        st.file_uploader("Base PIS", type=['xlsx'], key='up')
+            # Extração da Chave de Acesso (Bloqueio de duplicados)
+            inf_nfe = root.find('.//infNFe')
+            chave_acesso = inf_nfe.attrib.get('Id', '')[3:] if inf_nfe is not None else ""
 
-# --- CENTRAL ---
-c1, c2, c3 = st.columns([3, 4, 3])
-with c2:
-    if os.path.exists(".streamlit/Sentinela.png"):
-        st.image(".streamlit/Sentinela.png", use_container_width=True)
+            num_nf = buscar('nNF')
+            data_emi = buscar('dhEmi')
+            total_nf = root.find('.//total/ICMSTot')
+            vlr_nf = total_nf.find('vNF').text if total_nf is not None and total_nf.find('vNF') is not None else "0.0"
+            
+            bloco_parceiro = 'emit' if fluxo == "Entrada" else 'dest'
+            parceiro = root.find(f'.//{bloco_parceiro}')
+            cnpj = buscar('CNPJ', parceiro) if parceiro is not None else ""
+            uf = buscar('UF', parceiro) if parceiro is not None else ""
 
-st.markdown("---")
-col_e, col_s = st.columns(2, gap="large")
-with col_e:
-    st.markdown("### 📥 1. Entradas")
-    xml_ent = st.file_uploader("XMLs Entrada", type='xml', accept_multiple_files=True, key="ue")
-with col_s:
-    st.markdown("### 📤 2. Saídas")
-    xml_sai = st.file_uploader("XMLs Saída", type='xml', accept_multiple_files=True, key="us")
+            itens = root.findall('.//det')
+            for det in itens:
+                prod = det.find('prod')
+                imp = det.find('imposto')
+                n_item = det.attrib.get('nItem', '0')
+                
+                linha = {
+                    "CHAVE_ACESSO": chave_acesso,
+                    "NUM_NF": num_nf,
+                    "DATA_EMISSAO": pd.to_datetime(data_emi).replace(tzinfo=None) if data_emi else None,
+                    "CNPJ": cnpj, "UF": uf, 
+                    "VLR_NF": float(vlr_nf) if vlr_nf else 0.0, 
+                    "AC": int(n_item),
+                    "CFOP": buscar('CFOP', prod),
+                    "COD_PROD": buscar('cProd', prod),
+                    "DESCR": buscar('xProd', prod),
+                    "NCM": buscar('NCM', prod),
+                    "UNID": buscar('uCom', prod),
+                    "VUNIT": float(buscar('vUnCom', prod)) if buscar('vUnCom', prod) else 0.0,
+                    "QTDE": float(buscar('qCom', prod)) if buscar('qCom', prod) else 0.0,
+                    "VPROD": float(buscar('vProd', prod)) if buscar('vProd', prod) else 0.0,
+                    "DESC": float(buscar('vDesc', prod)) if buscar('vDesc', prod) else 0.0,
+                    "FRETE": float(buscar('vFrete', prod)) if buscar('vFrete', prod) else 0.0,
+                    "SEG": float(buscar('vSeg', prod)) if buscar('vSeg', prod) else 0.0,
+                    "DESP": float(buscar('vOutro', prod)) if buscar('vOutro', prod) else 0.0,
+                    "VC": 0.0, "CST-ICMS": "", "BC-ICMS": 0.0, "VLR-ICMS": 0.0, 
+                    "BC-ICMS-ST": 0.0, "ICMS-ST": 0.0, "VLR_IPI": 0.0, 
+                    "CST_PIS": "", "BC_PIS": 0.0, "VLR_PIS": 0.0, 
+                    "CST_COF": "", "BC_COF": 0.0, "VLR_COF": 0.0,
+                    "FCP": 0.0, "ICMS UF Dest": 0.0, "STATUS": "", 
+                    "Análise CST ICMS": "", "CST x BC": "", "Analise Aliq ICMS": ""
+                }
 
-# --- EXECUÇÃO ---
-if st.button("🚀 EXECUTAR AUDITORIA COMPLETA", type="primary", use_container_width=True):
-    if not xml_ent and not xml_sai:
-        st.error("Selecione os arquivos.")
-    else:
-        with st.spinner("Analisando..."):
-            df_e = extrair_dados_xml(xml_ent, "Entrada")
-            df_s = extrair_dados_xml(xml_sai, "Saída")
-            excel = gerar_excel_final(df_e, df_s)
-            st.success("Concluído!")
-            st.download_button("💾 BAIXAR RELATÓRIO", excel, "Auditoria_Sentinela.xlsx", use_container_width=True)
+                if imp is not None:
+                    icms_data = imp.find('.//ICMS')
+                    if icms_data is not None:
+                        for nodo in icms_data:
+                            cst = nodo.find('CST') if nodo.find('CST') is not None else nodo.find('CSOSN')
+                            if cst is not None: linha["CST-ICMS"] = cst.text
+                            if nodo.find('vBC') is not None: linha["BC-ICMS"] = float(nodo.find('vBC').text)
+                            if nodo.find('vICMS') is not None: linha["VLR-ICMS"] = float(nodo.find('vICMS').text)
+                    
+                    vipi = imp.find('.//vIPI')
+                    if vipi is not None: linha["VLR_IPI"] = float(vipi.text)
+                    vpis = imp.find('.//vPIS')
+                    if vpis is not None: linha["VLR_PIS"] = float(vpis.text)
+                    vcof = imp.find('.//vCOFINS')
+                    if vcof is not None: linha["VLR_COF"] = float(vcof.text)
+
+                linha["VC"] = linha["VPROD"] + linha["ICMS-ST"] + linha["VLR_IPI"] + linha["DESP"] - linha["DESC"]
+                dados_lista.append(linha)
+            
+            container_status.text(f"📊 Processando {i+1} de {total_arquivos}...")
+            progresso.progress((i + 1) / total_arquivos)
+        except:
+            continue
+    
+    df_resultado = pd.DataFrame(dados_lista)
+    
+    # Bloqueio de duplicados por Chave de Acesso + Item
+    if not df_resultado.empty:
+        df_resultado.drop_duplicates(subset=['CHAVE_ACESSO', 'AC'], keep='first', inplace=True)
+
+    container_status.empty()
+    progresso.empty()
+    return df_resultado
+
+def gerar_excel_final(df_ent, df_sai):
+    memoria = io.BytesIO()
+    with pd.ExcelWriter(memoria, engine='xlsxwriter') as escritor:
+        if not df_ent.empty: df_ent.to_excel(escritor, sheet_name='ENTRADAS', index=False)
+        if not df_sai.empty: 
+            df_sai.to_excel(escritor, sheet_name='SAIDAS', index=False)
+            df_sai.to_excel(escritor, sheet_name='ICMS', index=False)
+            df_sai.to_excel(escritor, sheet_name='IPI', index=False)
+            df_sai.to_excel(escritor, sheet_name='PIS_COFINS', index=False)
+            df_sai.to_excel(escritor, sheet_name='DIFAL', index=False)
+        else:
+            for aba in ['SAIDAS', 'ICMS', 'IPI', 'PIS_COFINS', 'DIFAL']:
+                pd.DataFrame().to_excel(escritor, sheet_name=aba, index=False)
+    return memoria.getvalue()
