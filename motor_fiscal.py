@@ -92,7 +92,7 @@ def gerar_excel_final(df_ent, df_sai, file_ger_ent=None, file_ger_sai=None):
     if df_sai is None: df_sai = pd.DataFrame()
     if df_ent is None: df_ent = pd.DataFrame()
 
-    # --- ABA ICMS (Original) ---
+    # --- ABA ICMS ---
     df_icms_audit = df_sai.copy(); tem_e = not df_ent.empty
     ncm_st = df_ent[(df_ent['CST-ICMS']=="60") | (df_ent['ICMS-ST'] > 0)]['NCM'].unique().tolist() if tem_e else []
     def audit_icms(row):
@@ -135,7 +135,7 @@ def gerar_excel_final(df_ent, df_sai, file_ger_ent=None, file_ger_sai=None):
     if not df_ipi_audit.empty:
         df_ipi_audit[['Diagnóstico', 'CST XML', 'CST Base', 'IPI XML', 'IPI Esperado', 'Ação', 'Complemento']] = df_ipi_audit.apply(audit_ipi, axis=1)
 
-    # --- ABA DIFAL (Auditoria XML Original) ---
+    # --- ABA DIFAL ---
     df_difal_audit = df_sai.copy()
     def audit_difal(row):
         is_i = row['UF_EMIT'] != row['UF_DEST']; cfop = str(row['CFOP']); diag, acao = [], []
@@ -149,7 +149,7 @@ def gerar_excel_final(df_ent, df_sai, file_ger_ent=None, file_ger_sai=None):
     if not df_difal_audit.empty:
         df_difal_audit[['Diagnóstico', 'DIFAL XML', 'Ação']] = df_difal_audit.apply(audit_difal, axis=1)
 
-    # --- ABA ICMS_DESTINO (Original) ---
+    # --- ABA ICMS_DESTINO ---
     if not df_sai.empty:
         df_dest = df_sai.groupby('UF_DEST').agg({'ICMS-ST': 'sum', 'VAL-DIFAL': 'sum', 'VAL-FCP': 'sum', 'VAL-FCPST': 'sum'}).reset_index()
         df_dest.columns = ['ESTADO', 'ST', 'DIFAL', 'FCP', 'FCP-ST']
@@ -179,56 +179,56 @@ def gerar_excel_final(df_ent, df_sai, file_ger_ent=None, file_ger_sai=None):
     df_ge = load_flexible_csv(file_ger_ent, c_ent)
     df_gs = load_flexible_csv(file_ger_sai, c_sai)
 
-    # --- NOVA ABA: PIS e COFINS (Fórmulas do Escritório) ---
+    # --- ÚNICA ALTERAÇÃO: ABA PIS e COFINS (Fórmulas do Escritório) ---
     def process_apuracao(ge, gs):
         if ge.empty and gs.empty: return pd.DataFrame()
-        # Converte valores p/ cálculo
-        for c in ['VC', 'Coluna3', 'ICMS']:
+        # Conversores numéricos para garantir os cálculos das fórmulas
+        for c in ['VC', 'Coluna3', 'ICMS', 'BC_PIS', 'PIS', 'BC_COF', 'COF']:
             if c in gs.columns: gs[c] = pd.to_numeric(gs[c].astype(str).str.replace(',', '.'), errors='coerce').fillna(0)
-        for c in ['VLR_NF', 'VLR_IPI', 'VLR-ICMS']:
+        for c in ['VLR_NF', 'VLR_IPI', 'VLR-ICMS', 'BC_PIS', 'VLR_PIS', 'BC_COF', 'VLR_COF']:
             if c in ge.columns: ge[c] = pd.to_numeric(ge[c].astype(str).str.replace(',', '.'), errors='coerce').fillna(0)
         
-        # Débitos (CST 01)
-        deb = gs[gs['CST_PIS'].isin(['01', '1'])].groupby(['AC', 'CFOP']).agg({'VC': 'sum', 'Coluna3': 'sum', 'ICMS': 'sum'}).reset_index()
-        deb.columns = ['ACUMULADOR', 'CFOP', 'Vlr Contabil', 'IPI', 'ICMS']
-        deb['Base Calculo'] = deb['Vlr Contabil'] - deb['IPI'] - deb['ICMS']
-        deb.insert(0, 'Tipo', 'DEBITO (CST 01)')
+        # DÉBITOS (Fórmula: Valor Contábil - IPI - ICMS para CST 01)
+        deb = gs[gs['CST_PIS'].astype(str).str.zfill(2) == '01'].groupby(['AC', 'CFOP']).agg({
+            'VC': 'sum', 'Coluna3': 'sum', 'ICMS': 'sum'
+        }).reset_index()
+        deb.columns = ['AC', 'CFOP', 'VLR CONTABIL', 'IPI', 'ICMS']
+        deb['BASE CALCULO'] = deb['VLR CONTABIL'] - deb['IPI'] - deb['ICMS']
+        deb['PIS (1.65%)'] = deb['BASE CALCULO'] * 0.0165
+        deb['COFINS (7.6%)'] = deb['BASE CALCULO'] * 0.076
+        deb.insert(0, 'TIPO', 'DÉBITOS (CST 01)')
 
-        # Créditos
-        cred = ge.groupby(['AC', 'CFOP']).agg({'VLR_NF': 'sum', 'VLR_IPI': 'sum', 'VLR-ICMS': 'sum'}).reset_index()
-        cred.columns = ['ACUMULADOR', 'CFOP', 'Vlr Contabil', 'IPI', 'ICMS']
-        cred['Base Calculo'] = cred['Vlr Contabil'] - cred['IPI']
-        cred.insert(0, 'Tipo', 'CREDITO')
+        # CRÉDITOS (Fórmula: Valor Contábil - IPI para Entradas)
+        cred = ge.groupby(['AC', 'CFOP']).agg({
+            'VLR_NF': 'sum', 'VLR_IPI': 'sum', 'VLR-ICMS': 'sum'
+        }).reset_index()
+        cred.columns = ['AC', 'CFOP', 'VLR CONTABIL', 'IPI', 'ICMS']
+        cred['BASE CALCULO'] = cred['VLR CONTABIL'] - cred['IPI']
+        cred['PIS (1.65%)'] = cred['BASE CALCULO'] * 0.0165
+        cred['COFINS (7.6%)'] = cred['BASE CALCULO'] * 0.076
+        cred.insert(0, 'TIPO', 'CRÉDITOS')
 
-        res = pd.concat([deb, cred], ignore_index=True)
-        res['PIS (1.65%)'] = res['Base Calculo'] * 0.0165
-        res['COFINS (7.6%)'] = res['Base Calculo'] * 0.076
-        return res
+        return pd.concat([deb, cred], ignore_index=True)
 
     df_apuracao_final = process_apuracao(df_ge, df_gs)
 
     # --- GRAVAÇÃO FINAL ---
     mem = io.BytesIO()
     with pd.ExcelWriter(mem, engine='xlsxwriter') as wr:
-        # Abas de XML (Restauração Completa)
         if not df_ent.empty: df_ent.to_excel(wr, sheet_name='ENTRADAS', index=False)
         if not df_sai.empty: df_sai.to_excel(wr, sheet_name='SAIDAS', index=False)
-        
-        # Abas de Auditoria (Restauração Completa)
         if not df_icms_audit.empty: df_icms_audit.to_excel(wr, sheet_name='ICMS', index=False)
         if not df_pc_audit.empty: df_pc_audit.to_excel(wr, sheet_name='PIS_COFINS', index=False)
         if not df_ipi_audit.empty: df_ipi_audit.to_excel(wr, sheet_name='IPI', index=False)
         if not df_difal_audit.empty: df_difal_audit.to_excel(wr, sheet_name='DIFAL', index=False)
         if not df_dest.empty: df_dest.to_excel(wr, sheet_name='ICMS_Destino', index=False)
         
-        # Nova Aba solicitada
+        # ABA SOLICITADA COM AS FÓRMULAS
         if not df_apuracao_final.empty: df_apuracao_final.to_excel(wr, sheet_name='PIS e COFINS', index=False)
         
-        # Abas Gerenciais
         if not df_ge.empty: df_ge.to_excel(wr, sheet_name='Gerenc. Entradas', index=False)
         if not df_gs.empty: df_gs.to_excel(wr, sheet_name='Gerenc. Saídas', index=False)
 
-        # Formatação Texto Coluna A
         wb = wr.book; f_t = wb.add_format({'num_format': '@'})
         for s in ['Gerenc. Entradas', 'Gerenc. Saídas']:
             if s in wr.sheets: wr.sheets[s].set_column('A:A', 20, f_t)
