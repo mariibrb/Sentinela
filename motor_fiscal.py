@@ -79,7 +79,7 @@ def gerar_excel_final(df_ent, df_sai):
         st_entrada = ("✅ ST Localizado" if ncm_atual in ncms_ent_st else "❌ Sem ST na Entrada") if tem_entradas else "⚠️ Entrada não enviada"
 
         if info_ncm.empty:
-            return pd.Series([st_entrada, f"NCM {ncm_atual} Ausente na Base", format_brl(row['VLR-ICMS']), "R$ 0,00", "Cadastrar NCM", "R$ 0,00"])
+            return pd.Series([st_entrada, f"NCM {ncm_atual} Ausente na Base", format_brl(row['VLR-ICMS']), "R$ 0,00", "Cadastrar NCM na Base", "R$ 0,00"])
 
         cst_esp = str(info_ncm.iloc[0]['CST_KEY'])
         aliq_esp = float(info_ncm.iloc[0, 3]) if row['UF_EMIT'] == row['UF_DEST'] else (float(info_ncm.iloc[0, 29]) if len(info_ncm.columns) > 29 else 12.0)
@@ -91,27 +91,27 @@ def gerar_excel_final(df_ent, df_sai):
         if cst_xml == "60":
             if row['VLR-ICMS'] > 0: 
                 diag_list.append(f"CST 60 com destaque: {format_brl(row['VLR-ICMS'])} | Esperado R$ 0,00")
-                acoes_list.append("Estorno de ICMS")
+                acoes_list.append("Estorno de ICMS destacado indevidamente")
             aliq_esp = 0.0
         else:
             if aliq_esp > 0 and row['VLR-ICMS'] == 0: 
                 diag_list.append(f"ICMS: Destacado R$ 0,00 | Esperado {aliq_esp}%")
-                acoes_list.append("NF Complementar (Imposto)")
+                acoes_list.append("Emitir NF Complementar de Imposto")
             if cst_xml != cst_esp: 
                 diag_list.append(f"CST: Destacado {cst_xml} | Esperado {cst_esp}")
-                acoes_list.append("Cc-e (CST)")
+                acoes_list.append(f"Cc-e (Corrigir CST para {cst_esp})")
             if abs(row['ALQ-ICMS'] - aliq_esp) > 0.01 and aliq_esp > 0: 
                 diag_list.append(f"Aliq: Destacada {row['ALQ-ICMS']}% | Esperada {aliq_esp}%")
-                acoes_list.append("Revisar Alíquota no ERP")
+                acoes_list.append("Ajustar parâmetro de Alíquota no ERP")
 
         comp_num = (aliq_esp - row['ALQ-ICMS']) * row['BC-ICMS'] / 100 if (row['ALQ-ICMS'] < aliq_esp and cst_xml != "60") else 0.0
         
-        # Consolidação da Ação
         res = "; ".join(diag_list) if diag_list else "✅ Correto"
         acao = " + ".join(list(dict.fromkeys(acoes_list))) if acoes_list else "✅ Correto"
 
         return pd.Series([st_entrada, res, format_brl(row['VLR-ICMS']), format_brl(row['BC-ICMS'] * aliq_esp / 100 if aliq_esp > 0 else 0), acao, format_brl(comp_num)])
 
+    # Colunas finais conforme solicitado: sem a coluna Cc-e
     col_audit = ['ST na Entrada', 'Diagnóstico', 'ICMS XML', 'ICMS Esperado', 'Ação', 'Complemento']
     df_icms_audit[col_audit] = df_icms_audit.apply(auditoria_final, axis=1)
 
